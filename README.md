@@ -1,6 +1,8 @@
-# From RALPH to Zenith
 
-**Designing harnesses for long-running agents**
+# From RALPH to Zenith: Designing harnesses for long-running agents
+
+<img width="1500" height="600" alt="image" src="https://github.com/user-attachments/assets/8c3c76e7-4a54-4c6e-95b7-25db573a0881" />
+
 
 Technical report from Intelligent Internet (2026) on how an agent harness should control work that may run for days or weeks, where the dominant failure mode is *premature completion* rather than inability to make progress.
 
