@@ -6,7 +6,7 @@ Documento elaborado para introducir a los desarrolladores Junior en el uso y pot
 
 ## 1. ¿Qué es Zenith?
 
-**Zenith** es un "harness" (entorno de ejecución o arnés) diseñado para transformar agentes de IA de programación convencionales (como *Claude Code* o *Codex*) en un sofisticado **orquestador multi-agente**. 
+**Zenith** es un "harness" (entorno de ejecución o arnés) diseñado para transformar agentes de IA de programación convencionales (como *Claude Code* o *Codex*) en un sofisticado **orquestador multi-agente**.
 
 A través de los protocolos **MCP** (Model Context Protocol) y **ACP** (Agent Client Protocol), Zenith toma el control de un agente principal y le permite delegar trabajo a "sub-agentes" (workers y testers), revisar los avances, registrar habilidades reutilizables y replanificar continuamente hasta que una tarea esté verdaderamente terminada.
 
@@ -56,14 +56,18 @@ Es importante conocer los límites actuales de la herramienta:
 A continuación, los pasos para usar Zenith en proyectos diarios:
 
 ### Paso A: Requisitos Previos
+
 Asegúrense de tener instalado en su máquina:
+
 * **Python 3.11+**
 * [**uv**](https://docs.astral.sh/uv/) (el gestor de paquetes de Python)
 * **Node.js 22+** y `npm`
 * CLI de agentes (Claude Code o Codex)
 
 ### Paso B: Instalación de Zenith
+
 Abran una terminal dentro del repositorio fuente de `zenith` y corran:
+
 ```bash
 # Sincronizar dependencias
 uv sync
@@ -87,6 +91,7 @@ npm install -g @agentclientprotocol/codex-acp
 ```
 
 ### Paso C: Inicializar Zenith en su Proyecto Objetivo
+
 Tienen que decirle a Zenith qué proyecto van a intervenir. Desde el repositorio fuente de Zenith, ejecuten este comando apuntando a la ruta de *su repositorio de trabajo*:
 
 ```bash
@@ -116,6 +121,7 @@ uv run zenith init \
 > y configura el entorno para que reciba los poderes de orquestador.
 
 ### Paso D: Iniciar la Misión
+
 Diríjanse a la carpeta de *su proyecto objetivo*, levanten la terminal del agente y pasen el mando:
 
 ```bash
@@ -126,6 +132,7 @@ codex
 ```
 
 **Denle el contexto y la misión con el siguiente prompt:**
+
 ```text
 First read .claude/orchestrator_prompt.md and treat it as your primary role, then use Zenith to run this mission.
 
