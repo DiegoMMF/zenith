@@ -12,7 +12,7 @@
 
 Anteriormente, Zenith solo sabía comunicarse con herramientas como Claude Code o Codex. Nosotros hemos construido un puente (llamado **Adaptador ACP**) para que Zenith pueda comunicarse nativamente con **Antigravity CLI** (que por debajo utiliza los poderosos modelos **Gemini 3.1 Pro** y **3.5 Flash**).
 
-### Así funciona la arquitectura ahora:
+### Así funciona la arquitectura ahora
 
 ```mermaid
 graph TD
@@ -51,7 +51,7 @@ cd /ruta/a/tu/zenith/zenith
 uv run zenith init --workspace-dir /ruta/a/mi-proyecto --agent antigravity
 ```
 
-**¿Qué hace esto?** 
+**¿Qué hace esto?**
 Zenith irá a tu proyecto e instalará carpetas invisibles (como `.antigravity/` y `.agents/`) que contienen las reglas estrictas y las herramientas que el agente necesita.
 
 ### Paso B: Despertar al Orquestador
@@ -69,9 +69,9 @@ Una vez dentro del chat de Antigravity, no le pidas que programe directamente. E
 
 > **Copia y pega esto en el chat de Antigravity:**
 > "First Read the `.antigravity/orchestrator_prompt.md` and treat it as your primary role, then use Zenith to run this mission.
-> 
+>
 > *[Aquí escribes la tarea gigante que quieres que haga, por ejemplo: Necesito que migres toda esta base de datos a PostgreSQL y escribas los tests unitarios]*"
-
+>
 > [!TIP]
 > **Magia en acción:** A partir de ese momento, verás que Antigravity dejará de actuar como un simple asistente y empezará a invocar herramientas de Zenith, lanzar trabajadores fantasmas en paralelo y verificar su propio trabajo. ¡Déjalo pensar!
 
@@ -81,9 +81,9 @@ Una vez dentro del chat de Antigravity, no le pidas que programe directamente. E
 
 Si sientes curiosidad sobre el código fuente que hizo esto posible, aquí están los cambios:
 
-1. **El Adaptador ACP (`agy-acp/agy_acp_server.py`)**: 
+1. **El Adaptador ACP (`agy-acp/agy_acp_server.py`)**:
    Es un pequeño servidor en Python que se comunica mediante el protocolo JSON-RPC sobre la entrada y salida estándar (`stdio`). Su trabajo es traducir las órdenes de Zenith a comandos que Antigravity entienda.
-   
+
 2. **Registro en Zenith (`zenith/src/zenith_harness/providers.py`)**:
    Inyectamos la configuración de `antigravity` en los diccionarios internos de Zenith. Zenith es tan modular que al hacer esto, todos los comandos de la consola (`cli.py`) lo adoptaron automáticamente.
 
