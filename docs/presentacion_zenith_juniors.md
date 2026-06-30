@@ -40,7 +40,7 @@ Para el día a día de un equipo de desarrollo, Zenith brilla en:
 
 Para entender verdaderamente Zenith, hay que ver sus componentes internos (`CLAUDE.md`):
 
-* **No es un agente en sí mismo, es un Servidor MCP.** Cuando inicializas Zenith, le inyecta 7 "herramientas" especiales al agente anfitrión (Claude o Codex) para darle sus poderes de orquestación.
+* **No es un agente en sí mismo, es un Servidor MCP.** Cuando inicializas Zenith, le inyecta 7 "herramientas" especiales al agente anfitrión (por ejemplo, Claude, Codex, OpenCode o Antigravity) para darle sus poderes de orquestación.
 * **El Coordinador y la Máquina de Estados:** El núcleo es un *state-machine* que transiciona de planificación a ejecución. A partir de ahí, un `Dispatcher` lanza procesos ACP en paralelo (hasta 4 por defecto).
 * **Memoria en Disco:** El controlador no guarda la memoria temporalmente en RAM; todo se guarda de forma duradera en una base local dentro de `$ZENITH_HOME/projects/`. Si tu computadora se apaga, la misión se reanuda desde el último estado en disco.
 
@@ -48,8 +48,10 @@ Para entender verdaderamente Zenith, hay que ver sus componentes internos (`CLAU
 
 Es importante conocer los límites actuales de la herramienta:
 
-* **CLIs Soportados (Orquestadores):** Oficialmente, Zenith solo soporta **Claude Code** y **Codex** como terminales anfitrionas. Integrar otras herramientas (como OpenCode o Antigravity) requeriría modificar el código fuente (`providers.py`) y crear adaptadores ACP.
-* **Modelos Soportados:** Aunque Zenith maneja las interfaces de Claude y Codex, puedes utilizar el "cerebro" de otros modelos (como GLM-5.2, DeepSeek V4 Pro, Gemini) **indirectamente**. Esto se hace mediante variables de entorno (ej. cambiando `ANTHROPIC_BASE_URL` para apuntar a un proxy, o definiendo `GLM_BASE_URL`) que reenvían las peticiones de la terminal al modelo deseado.
+* **Providers registrados:** el código actual registra `claude`, `codex`, `antigravity` y `opencode` como providers posibles para orquestador y workers.
+* **No todos tienen la misma madurez:** Claude y Codex tienen integración más directa. `opencode` está registrado con el comando `opencode acp`. `antigravity` también está registrado, pero el adaptador incluido en este repositorio es un proof-of-concept y no garantiza por sí solo selección real de modelos Gemini.
+* **Zenith separa por rol, no por dificultad automática:** puedes configurar orquestador, workers y validators con providers distintos, pero Zenith no decide dinámicamente "esta tarea es simple, uso modelo barato" y "esta tarea es compleja, uso modelo caro". Esa política hoy se logra configurando roles.
+* **Modelos vía entorno:** para algunos providers, especialmente Claude, puedes usar variables de entorno para apuntar el orquestador y los sub-agentes a modelos distintos. Zenith reenvía variables como `ANTHROPIC_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`, `ANTHROPIC_BASE_URL`, `GLM_BASE_URL`, `ZAI_BASE_URL` y sus claves asociadas.
 
 ## 7. 🛠️ Guía de Implementación Paso a Paso
 
@@ -62,7 +64,7 @@ Asegúrense de tener instalado en su máquina:
 * **Python 3.11+**
 * [**uv**](https://docs.astral.sh/uv/) (el gestor de paquetes de Python)
 * **Node.js 22+** y `npm`
-* CLI de agentes (Claude Code o Codex)
+* CLI de agentes según el provider que quieran usar: Claude Code, Codex, OpenCode o Antigravity
 
 ### Paso B: Instalación de Zenith
 
@@ -89,6 +91,10 @@ npm install -g @agentclientprotocol/claude-agent-acp
 # Adaptador para Codex
 npm install -g @agentclientprotocol/codex-acp
 ```
+
+Para OpenCode, Zenith espera que exista el comando `opencode acp`. Para Antigravity, el repo
+incluye un adaptador de prueba (`python -m agy_acp_server`), pero no debe confundirse con una
+integración completa de modelos Gemini.
 
 ### Paso C: Inicializar Zenith en su Proyecto Objetivo
 
@@ -164,13 +170,133 @@ Para que un agente continúe exactamente el trabajo y las tareas donde se quedó
 1. **Busca el ID original:** Ejecuta `uv run zenith list-projects` y copia el ID del proyecto en el que estabas trabajando (ej. `20260630T...-project`).
 2. **Prepara el entorno para el nuevo agente:** Ejecuta `uv run zenith init --workspace-dir /ruta/a/mi-proyecto --agent claude`.
 3. **Pasa el mando:** Inicia Claude y dile explícitamente en tu primer prompt:
-   > First Read the .antigravity/orchestrator_prompt.md and treat it as your primary role, then use Zenith to run this mission.
+   > First read .claude/orchestrator_prompt.md and treat it as your primary role, then use Zenith to run this mission.
    >
    > *"Quiero que retomes un proyecto de Zenith existente. El ID del proyecto es **`<pega_aqui_el_id>`**. Por favor, utiliza tu herramienta `inspect_project` pasando este ID para ver el estado actual, las tareas pendientes y la memoria del proyecto, y luego continúa la ejecución llamando a `advance_project`."*
 
-De esta forma, Claude (o el agente que elijas) se conectará al mismo "bucket" y retomará el árbol de tareas de forma transparente.
+Si el nuevo agente es otro, cambia la ruta del prompt:
 
-## 9. Recomendaciones de Modelos (Setup Ideal para Economizar)
+* Claude: `.claude/orchestrator_prompt.md`
+* Codex: `.codex/orchestrator_prompt.md`
+* Antigravity: `.antigravity/orchestrator_prompt.md`
+* OpenCode: `.opencode/orchestrator_prompt.md`
+
+De esta forma, el agente elegido se conecta al mismo "bucket" y retoma el árbol de tareas de forma transparente.
+
+## 9. Configurar Modelos Caros y Baratos con el Zenith Actual
+
+La idea práctica es simple: usar un modelo más inteligente para el **orquestador** y un modelo
+más barato o rápido para **workers / validators**. La implementación concreta depende del
+provider.
+
+> [!IMPORTANT]
+> Zenith no tiene todavía una opción universal tipo `--orchestrator-model` y
+> `--worker-model`. Lo que sigue usa solo la configuración actual del repositorio.
+
+| Provider | Orquestador | Workers / validators | Cómo configurarlo | Límite actual |
+| --- | --- | --- | --- | --- |
+| `claude` | Modelo definido por `ANTHROPIC_MODEL` | Modelo definido por `CLAUDE_CODE_SUBAGENT_MODEL` | Variables de entorno antes de `zenith init` | Es la ruta más limpia hoy |
+| `codex` | `gpt-5.5` queda escrito en `.codex/config.toml` | Puede pasarse por `--worker-acp-command` | Override `codex-acp -c model="..."` | Validators pueden requerir ajuste manual |
+| `antigravity` | Depende del CLI/backend externo | Depende del CLI/backend externo | Zenith solo registra el provider | El adaptador incluido es simulado |
+| `opencode` | Depende de `opencode acp` | Depende de `opencode acp` | Configuración propia de OpenCode | Zenith no fuerza modelo por rol |
+
+### Caso A: Claude con orquestador Opus y workers Haiku
+
+Este es el caso mejor soportado sin tocar código. Define el modelo del orquestador con
+`ANTHROPIC_MODEL` y el de sub-agentes con `CLAUDE_CODE_SUBAGENT_MODEL` antes de inicializar el
+workspace:
+
+```bash
+cd /ruta/al/repositorio/zenith/zenith
+
+export ANTHROPIC_MODEL="claude-opus-model-id"
+export CLAUDE_CODE_SUBAGENT_MODEL="claude-haiku-model-id"
+
+uv run zenith init \
+  --workspace-dir /ruta/a/mi-proyecto \
+  --agent claude
+```
+
+Después inicia Claude desde el proyecto objetivo:
+
+```bash
+cd /ruta/a/mi-proyecto
+claude
+```
+
+Usa los IDs reales que acepte tu instalación de Claude Code. Si apuntas Claude a un proxy o a
+un proveedor compatible, también puedes definir `ANTHROPIC_BASE_URL` y las claves necesarias
+antes de ejecutar `zenith init`.
+
+### Caso B: Codex con orquestador GPT-5.5 y workers GPT-5.4-mini
+
+El bootstrap actual de Zenith escribe `model = "gpt-5.5"` en `.codex/config.toml`, así que el
+orquestador de Codex queda en GPT-5.5 sin hacer nada extra. Para workers, usa
+`--worker-acp-command`:
+
+```bash
+cd /ruta/al/repositorio/zenith/zenith
+
+uv run zenith init \
+  --workspace-dir /ruta/a/mi-proyecto \
+  --agent codex \
+  --worker-acp-command 'codex-acp -c model="gpt-5.4-mini"'
+```
+
+Esto configura:
+
+* **Orquestador:** GPT-5.5, por el `model` generado en `.codex/config.toml`.
+* **Workers:** GPT-5.4-mini, por el override del comando ACP.
+
+Si también quieres forzar validators a GPT-5.4-mini y notas que no heredan el comando del
+worker, revisa el bloque `[mcp_servers.zenith.env]` en `.codex/config.toml` y agrega o ajusta:
+
+```toml
+ZENITH_VALIDATOR_ACP_COMMAND = "codex-acp -c model=\"gpt-5.4-mini\""
+```
+
+Este ajuste manual es una limitación del estado actual: Zenith sí separa roles, pero no expone
+todavía una opción universal de modelo por rol.
+
+### Caso C: Antigravity con Gemini Pro y Flash
+
+Con el repositorio tal como está, Zenith puede preparar el provider `antigravity`:
+
+```bash
+cd /ruta/al/repositorio/zenith/zenith
+
+uv run zenith init \
+  --workspace-dir /ruta/a/mi-proyecto \
+  --agent antigravity
+```
+
+Pero Zenith no puede garantizar por sí solo:
+
+* orquestador en `gemini-3.1-pro`;
+* workers en `gemini-3.5-flash`.
+
+La razón es que el adaptador `agy-acp/agy_acp_server.py` incluido aquí responde como prueba de
+concepto y no conecta realmente con un selector de modelos Gemini. Para lograr ese ruteo sin
+modificar Zenith, debes configurarlo en el propio CLI/backend de Antigravity si expone flags o
+variables para modelo principal y modelo de sub-agentes.
+
+### Caso D: OpenCode como alternativa económica
+
+Zenith registra `opencode` y usa `opencode acp` como comando de workers. Puedes inicializarlo
+así:
+
+```bash
+cd /ruta/al/repositorio/zenith/zenith
+
+uv run zenith init \
+  --workspace-dir /ruta/a/mi-proyecto \
+  --agent opencode
+```
+
+La elección fina de modelos depende de la configuración de OpenCode. Zenith no fuerza todavía
+"orquestador caro / workers baratos" para OpenCode desde sus propias opciones.
+
+## 10. Recomendaciones de Modelos (Setup Ideal para Economizar)
 
 > [!NOTE]
 > Verificado el **30 de junio de 2026**. Esta parte cambia rápido: antes de fijar un
@@ -227,7 +353,7 @@ OpenAI-compatible.
 ### 💡 Mi recomendación de Setup para Zenith
 
 Puesto que con Zenith dividimos el trabajo entre el **orquestador** y los **workers /
-validators**, lo más inteligente para ahorrar dinero es usar un **sistema de ruteo mixto**:
+validators**, lo más inteligente para ahorrar dinero es usar una **configuración mixta por rol**:
 
 1. **Orquestador:** usar **GLM-5.2**, **DeepSeek V4 Pro**, **Claude Opus/Sonnet** o **GPT-5
    Codex** si el trabajo exige mucha planificación, revisión de requisitos o retención de
