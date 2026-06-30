@@ -170,9 +170,108 @@ Para que un agente continúe exactamente el trabajo y las tareas donde se quedó
 
 De esta forma, Claude (o el agente que elijas) se conectará al mismo "bucket" y retomará el árbol de tareas de forma transparente.
 
-## 9. Directrices para Contribuir al Código de Zenith
+## 9. Recomendaciones de Modelos (Setup Ideal para Economizar)
 
-Si algún desarrollador necesita hacer cambios en el motor de Zenith (`zenith/src/zenith_harness/`), debe seguir estas directrices dictadas por `AGENTS.md`:
+> [!NOTE]
+> Verificado el **30 de junio de 2026**. Esta parte cambia rápido: antes de fijar un
+> presupuesto real, revisen los precios y límites actuales del proveedor que vayan a usar.
 
-* **Estilo y Tipado:** Usar tipado estricto de Python (`mypy`), Modelos Pydantic para los datos, y un límite estricto de 100 caracteres por línea regulado por **Ruff**.
-* **Pruebas (Testing):** Los tests corren sobre `pytest-asyncio`. Se debe priorizar "mockear" (simular) el comportamiento del `Dispatcher` para pruebas rápidas. Las pruebas reales (*smoke tests*) que levantan agentes externos se ejecutan solo bajo demanda mediante variables de entorno.
+Si lo que buscan es buen costo-beneficio para programación mediante agentes, a mediados de
+2026 conviene pensar menos en "un modelo ganador" y más en **qué rol cumple cada modelo**:
+planificación, escritura masiva de código, validación independiente o ejecución barata de
+muchos intentos.
+
+### 1. Arquitectura y tareas largas: GLM-5.2
+
+**GLM-5.2** es una opción fuerte para tareas largas de arquitectura y coordinación. La ficha
+de Hugging Face de Z.ai lista **753B parámetros**, licencia **MIT**, soporte de **1M tokens de
+contexto** y foco explícito en tareas "long-horizon". No lo traten como "barato para todo":
+su valor está en sostener contexto amplio y planificación de alto nivel.
+
+### 2. Costo-beneficio general: DeepSeek V4 Pro / Flash
+
+**DeepSeek V4** es una de las mejores opciones cuando el costo importa. La documentación
+oficial publica dos variantes:
+
+* **DeepSeek V4 Flash:** 284B parámetros totales / 13B activos, 1M de contexto, tool calling,
+  JSON mode y precio oficial de **USD 0.14 input / USD 0.28 output por millón de tokens**.
+* **DeepSeek V4 Pro:** 1.6T parámetros totales / 49B activos, 1M de contexto, orientado a
+  razonamiento y agentes, con precio oficial de **USD 0.435 input / USD 0.87 output por
+  millón de tokens** en la API directa de DeepSeek.
+
+Para Zenith, **Flash** encaja muy bien como worker/validator barato; **Pro** tiene más sentido
+cuando el sub-agente debe razonar bastante antes de tocar código.
+
+### 3. Tool calling y agentes de código: Qwen
+
+La familia **Qwen** sigue siendo muy relevante para flujos agénticos. Qwen documenta
+**Qwen3-Coder-480B-A35B-Instruct** con 256K de contexto nativo, extensión hasta 1M con YaRN,
+Qwen Code como CLI, integración con Claude Code mediante proxy y buen soporte de tool use.
+Además, OpenCode Go expone modelos Qwen recientes, como **Qwen3.7 Max**, **Qwen3.7 Plus** y
+**Qwen3.6 Plus**.
+
+Recomendación práctica: usen Qwen cuando necesiten muchos tool calls, edición de repositorio
+y compatibilidad con CLIs, pero validen en su propio proyecto porque la calidad depende mucho
+del proveedor que sirve el modelo y de la configuración del agente.
+
+### 4. Velocidad e iteración: Kimi K2.7 Code
+
+**Kimi K2.7 Code** está documentado en la plataforma de Kimi como su modelo de coding más
+capaz, con **256K de contexto**, soporte multimodal, tool calls, JSON mode, thinking mode y
+una variante **HighSpeed** que apunta a mayor velocidad de salida. Es buena alternativa para
+workers que necesitan avanzar rápido, especialmente cuando se usa detrás de una API
+OpenAI-compatible.
+
+---
+
+### 💡 Mi recomendación de Setup para Zenith
+
+Puesto que con Zenith dividimos el trabajo entre el **orquestador** y los **workers /
+validators**, lo más inteligente para ahorrar dinero es usar un **sistema de ruteo mixto**:
+
+1. **Orquestador:** usar **GLM-5.2**, **DeepSeek V4 Pro**, **Claude Opus/Sonnet** o **GPT-5
+   Codex** si el trabajo exige mucha planificación, revisión de requisitos o retención de
+   contexto. En esta capa conviene pagar más si evita malas decisiones arquitectónicas.
+2. **Workers:** usar **DeepSeek V4 Flash**, **Kimi K2.7 Code HighSpeed** o **Qwen3.7 Plus /
+   Qwen3-Coder**. Aquí se queman la mayoría de los tokens, así que prioricen precio,
+   velocidad y buena edición de código.
+3. **Validators:** no usen siempre el mismo modelo que escribió el código. Si el worker fue
+   DeepSeek Flash, prueben validar con Qwen/Kimi/Claude Haiku/Sonnet; la diversidad reduce
+   puntos ciegos.
+4. **Tareas críticas:** para cambios de seguridad, migraciones de datos, auth, pagos o
+   infraestructura, suban temporalmente la calidad del validator aunque sea más caro.
+5. **Proyectos grandes:** activen caché de contexto cuando el proveedor la cobre barato. En
+   flujos con mucho repo repetido, el cache hit puede cambiar más el costo final que el precio
+   nominal del modelo.
+
+> [!TIP]
+> **OpenCode Go como opción económica:** esta rama de Zenith ya incluye provider `opencode`
+> (`opencode acp`). OpenCode Go cuesta **USD 5 el primer mes y luego USD 10/mes**, e incluye
+> GLM-5.2, DeepSeek V4 Pro/Flash, Kimi K2.7 Code y Qwen recientes. Pero no es una tarifa plana
+> ilimitada: la documentación oficial define límites por valor de uso (**USD 12 cada 5 horas,
+> USD 30 semanal y USD 60 mensual**) y permite usar saldo adicional si se habilita. Es muy
+> atractivo para juniors o pruebas intensivas, pero no prometan "costo marginal cero" para uso
+> sin límites.
+
+### Checklist para elegir modelo antes de lanzar una misión
+
+Antes de lanzar Zenith, definan:
+
+* **Presupuesto máximo:** costo por hora o por misión, no solo por millón de tokens.
+* **Contexto necesario:** 128K alcanza para tareas chicas; 256K-1M sirve para repos grandes,
+  auditorías y migraciones.
+* **Herramientas:** confirmar tool calling, JSON mode, FIM si van a editar código, y soporte
+  ACP/CLI real.
+* **Latencia:** para workers paralelos, un modelo algo menos inteligente pero mucho más rápido
+  puede terminar antes y costar menos.
+* **Privacidad:** revisar retención de datos, región de hosting y si el proveedor usa prompts
+  para entrenamiento.
+* **Plan B:** tener un modelo alternativo configurado para cuando haya rate limits, caídas o
+  degradación de calidad.
+
+Fuentes consultadas: [GLM-5.2 en Hugging Face](https://huggingface.co/zai-org/GLM-5.2),
+[DeepSeek V4 Preview](https://api-docs.deepseek.com/news/news260424),
+[precios oficiales de DeepSeek](https://api-docs.deepseek.com/quick_start/pricing),
+[Qwen3-Coder](https://qwenlm.github.io/blog/qwen3-coder/),
+[Kimi K2.7 Code](https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart),
+[OpenCode Go](https://opencode.ai/docs/go/).
