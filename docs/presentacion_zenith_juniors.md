@@ -147,7 +147,30 @@ First read .codex/orchestrator_prompt.md and treat it as your primary role, then
 <Aquí escriben el requerimiento complejo que necesitan programar>
 ```
 
-## 8. Directrices para Contribuir al Código de Zenith
+## 8. Continuar un Proyecto y Cambio de Agentes (Resilience & Handoff)
+
+Es común que una tarea agote los tokens o créditos de un agente (ej. límite de horas). Si esto ocurre, puedes retomar el mismo proyecto exacto, **incluso usando otro agente distinto** (por ejemplo, pasándote de Codex a Claude).
+
+### ¿Cómo funciona el almacenamiento de Zenith?
+
+Cuando usas `zenith init --agent codex`, solo preparas tu carpeta local (instalando configuraciones de arranque). El proyecto *real* de Zenith (tareas, estado, intentos) **se crea recién al iniciar el agente** y cuando éste ejecuta la herramienta `start_project`. Esto genera un "bucket" de almacenamiento agnóstico al agente, guardado globalmente en `$ZENITH_HOME/projects/<project_id>/`.
+
+Si simplemente inicializas Claude y le dices "continúa", por defecto el orquestador llamará a `start_project` y **creará un proyecto nuevo** desde cero (generando un ID nuevo). Ambos agentes operarán sobre tu mismo código local, pero tendrán listas de tareas de Zenith completamente independientes.
+
+### Cómo retomar el proyecto exacto (Handoff)
+
+Para que un agente continúe exactamente el trabajo y las tareas donde se quedó el anterior:
+
+1. **Busca el ID original:** Ejecuta `uv run zenith list-projects` y copia el ID del proyecto en el que estabas trabajando (ej. `20260630T...-project`).
+2. **Prepara el entorno para el nuevo agente:** Ejecuta `uv run zenith init --workspace-dir /ruta/a/mi-proyecto --agent claude`.
+3. **Pasa el mando:** Inicia Claude y dile explícitamente en tu primer prompt:
+   > First Read the .antigravity/orchestrator_prompt.md and treat it as your primary role, then use Zenith to run this mission.
+   >
+   > *"Quiero que retomes un proyecto de Zenith existente. El ID del proyecto es **`<pega_aqui_el_id>`**. Por favor, utiliza tu herramienta `inspect_project` pasando este ID para ver el estado actual, las tareas pendientes y la memoria del proyecto, y luego continúa la ejecución llamando a `advance_project`."*
+
+De esta forma, Claude (o el agente que elijas) se conectará al mismo "bucket" y retomará el árbol de tareas de forma transparente.
+
+## 9. Directrices para Contribuir al Código de Zenith
 
 Si algún desarrollador necesita hacer cambios en el motor de Zenith (`zenith/src/zenith_harness/`), debe seguir estas directrices dictadas por `AGENTS.md`:
 
