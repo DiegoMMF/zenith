@@ -1,0 +1,286 @@
+
+╭──────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.142.4)                   │
+│                                              │
+│ model:     gpt-5.5 medium   /model to change │
+│ directory: ~/Datos/Software/zenith           │
+╰──────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+• You have 1 usage limit reset available. Run /usage to use one.
+
+
+› Analiza el presente repo y explícame en pocas palabras, cómo puedo implementarlo.
+
+
+⚠ Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill, but some descriptions are shorter.
+  Disable unused skills or plugins to leave more room for the rest.
+
+• Voy a revisar la estructura del repo y los archivos de configuración principales para entender qué es, cómo se ejecuta y qué piezas hay que
+  levantar.
+
+• Ran pwd && rg --files -g '!*node_modules*' -g '!*.png' -g '!*.jpg' -g '!*.jpeg' -g '!*.gif' | head -200
+  └ /home/diego/Datos/Software/zenith
+    CITATION.cff
+    … +67 lines (ctrl + t to view transcript)
+    zenith/src/zenith_harness/bundled/providers/codex/agents/contract-review.toml
+    zenith/src/zenith_harness/bundled/providers/codex/agents/investigator.toml
+
+• Explored
+  └ Search package.json in .
+    List ls -la
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• El repo parece centrado en un paquete Python llamado zenith_harness, no en una app web. Ahora voy a leer los README y el pyproject.toml para
+  sacar comandos exactos y requisitos.
+
+• Explored
+  └ Read README.md, pyproject.toml, cli.py
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• Ya tengo la ruta de uso: se instala el paquete, se inicializa un repo objetivo y después el agente anfitrión consume el prompt/MCP generado.
+  Revisaré brevemente el servidor y la configuración para explicar qué “implementa” realmente Zenith por dentro.
+
+• Explored
+  └ Read server.py, config.py, providers.py, controller.py
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• También identifiqué las piezas internas: CLI para inicializar, servidor MCP por stdio y dispatcher ACP para lanzar workers/validadores. Con
+  eso alcanza para darte una explicación corta y práctica.
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• Este repo implementa Zenith, un harness Python que convierte Claude Code o Codex en un orquestador multi-agente para tareas largas. No es una
+  app final: es una herramienta que instalás y luego aplicás sobre otro repo objetivo.
+
+  Para usarlo:
+
+  cd /home/diego/Datos/Software/zenith/zenith
+  uv sync
+  uv run zenith --help
+
+  Instalá el adaptador ACP según el agente:
+
+  npm install -g @agentclientprotocol/codex-acp
+  # o
+  npm install -g @agentclientprotocol/claude-agent-acp
+
+  Después inicializás el repo donde querés trabajar:
+
+  uv run zenith init --workspace-dir /ruta/a/tu/proyecto --agent codex
+  # o
+  uv run zenith init --workspace-dir /ruta/a/tu/proyecto --agent claude
+
+  Eso genera configuración MCP, prompts y agentes en .codex/ o .claude/. Luego entrás al proyecto objetivo:
+
+  cd /ruta/a/tu/proyecto
+  codex
+
+  Y le pedís:
+
+  First read .codex/orchestrator_prompt.md and treat it as your primary role, then use Zenith to run this mission.
+
+  <tu tarea>
+
+  En pocas palabras: Zenith se implementa como paquete Python + servidor MCP + workers ACP. El orquestador crea un proyecto, divide la misión
+  en tareas, lanza workers/validadores, revisa brechas y decide si seguir, parchear o cerrar.
+
+  Para desarrollo local del repo:
+
+  cd zenith
+  uv run pytest
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+› Entonces, si entiendo bien, es un conjunto equivalente al de skills o mcps, que configura un repositorio determinado para que luego un cli
+    como claude code o codex se manejen o comporten según dichos lineamientos, y esto, en teoría, mejora el desempleño de los clis (claude
+  code
+    o codex) por sí mismos?
+
+
+• Sí, entendido casi perfecto.
+
+  Zenith no reemplaza a Claude Code o Codex. Les agrega una capa de orquestación alrededor:
+
+  - instala/configura MCP tools en el repo objetivo;
+  - copia skills/prompts/agentes auxiliares;
+  - le da al CLI un rol explícito de orquestador;
+  - permite lanzar workers/validadores mediante ACP;
+  - mantiene estado del proyecto, tareas, contratos, decisiones y revisiones;
+  - fuerza un ciclo de trabajo más disciplinado: planificar, ejecutar, validar, detectar brechas, corregir y recién después cerrar.
+
+  La idea es que Claude Code o Codex solos suelen trabajar como una sesión única: leen, editan, prueban y terminan. Zenith intenta mejorar eso
+  para tareas largas haciendo que el agente no “declare terminado” demasiado pronto.
+
+  En teoría mejora el desempeño porque cambia el harness, no necesariamente el modelo. Es decir: el mismo CLI/modelo puede rendir mejor si
+  trabaja con:
+
+  - división explícita de tareas;
+  - workers separados;
+  - validadores independientes;
+  - memoria de estado;
+  - revisión terminal antes de cerrar;
+  - reglas para replanificar cuando aparecen huecos.
+
+  La comparación correcta sería:
+
+  Codex solo
+  vs
+  Codex actuando como orquestador Zenith + workers/validadores
+
+  O:
+
+  Claude Code solo
+  vs
+  Claude Code bajo el harness Zenith
+
+  La mejora esperada aplica sobre todo en tareas complejas o largas. Para cambios pequeños, probablemente agrega más ceremonia de la necesaria.
+
+
+› Y qué ventaja me supondría usar Zenith vs usar varias sesiones en simultáneo de Claude Code o Codex, yo mismo?
+
+
+• La ventaja principal es disciplina y coordinación automática.
+
+  Podés abrir varias sesiones vos mismo, pero ahí vos pasás a ser el orquestador: tenés que repartir tareas, evitar solapamientos, recordar
+  decisiones, revisar resultados, detectar brechas, decidir reintentos y cerrar cuando realmente esté completo.
+
+  Zenith intenta automatizar esa parte:
+
+  - Estado compartido: guarda misión, tareas, dependencias, intentos, decisiones y resultados.
+  - Plan explícito: obliga a transformar el objetivo en una lista de tareas verificables.
+  - Workers coordinados: lanza agentes para tareas concretas, con contexto acotado.
+  - Validación separada: puede usar validadores/revisores distintos del worker que hizo el cambio.
+  - Control de cierre: antes de terminar, busca huecos pendientes en vez de confiar en el “ya está”.
+  - Menos carga mental: vos no tenés que mantener manualmente el tablero de qué hizo cada sesión.
+
+  La diferencia sería algo así:
+
+  Varias sesiones manuales:
+  vos = PM + integrador + reviewer + memoria del proyecto
+
+  Zenith:
+  vos = das la misión
+  Zenith/agente orquestador = PM + dispatcher + memoria + validación
+
+  La desventaja: añade fricción. Para tareas chicas, usar Zenith puede ser más pesado que abrir una sesión normal. Su punto fuerte son tareas
+  donde hay muchas partes, riesgo de regresiones, necesidad de revisión independiente o trabajo que puede requerir varias rondas.
+
+
+› Y puedo usarlo con otros clis (como opencode o antigravity) y/o con otros agentes (como GLM-5.2, Gemini 3.1 Pro o DeepSeek V4 Pro)? En caso
+    afirmativo, podrías explicarme cómo hacerlo?
+
+
+• Voy a verificar en el código qué proveedores están realmente soportados hoy y si hay puntos de extensión claros para otros CLIs/modelos, para
+  no responder desde suposiciones.
+
+• Explored
+  └ Read cli.py, dispatcher.py
+    Search claude|codex|GLM|Gemini|DeepSeek|ZAI|provider|acp in zenith_harness
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• El código confirma que el soporte “oficial” del repo está limitado a claude y codex; otros modelos pueden entrar solo si el CLI/adaptador que
+  uses los expone detrás de Claude Code/Codex o si agregás un provider nuevo.
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• Sí, pero con una distinción importante:
+
+  Hoy este repo soporta oficialmente solo dos CLIs como host/orquestador: claude y codex.
+
+  Eso está hardcodeado en zenith/src/zenith_harness/providers.py:6:
+
+  ProviderName = Literal["claude", "codex"]
+
+  Y los providers definidos son:
+
+  "claude" -> .claude/, .mcp.json, claude-agent-acp
+  "codex"  -> .codex/, .codex/config.toml, codex-acp
+
+  Entonces:
+
+  OpenCode / Antigravity
+  No directamente, salvo que cumplan una de estas dos condiciones:
+
+  1. soporten MCP compatible con Zenith como host;
+  2. tengan o puedas crear un adaptador ACP equivalente a claude-agent-acp o codex-acp.
+
+  Para integrarlos bien habría que agregar un provider nuevo en zenith/src/zenith_harness/providers.py, por ejemplo opencode, definiendo:
+
+  - dónde escribe skills;
+  - dónde escribe agentes/subagentes;
+  - qué formato de config MCP usa;
+  - qué comando ACP lanza workers;
+  - dónde pone el prompt de orquestador.
+
+  Algo conceptual:
+
+  "opencode": ProviderDefinition(
+      name="opencode",
+      skill_dirs=(".opencode/skills", ".agents/skills"),
+      config_format="mcp_json",
+      default_worker_acp_command="opencode-acp",
+      agent_output_dir=".opencode/agents",
+      orchestrator_prompt_output_path=".opencode/orchestrator_prompt.md",
+  )
+
+  Pero eso solo sirve si existe opencode-acp o algo equivalente.
+
+  GLM, Gemini, DeepSeek
+  Depende de dónde los uses.
+
+  Si los usás dentro de Claude Code o Codex, sí puede funcionar indirectamente. Por ejemplo, el repo ya reenvía variables como:
+
+  GLM_API_KEY
+  GLM_BASE_URL
+  ZAI_API_KEY
+  ZAI_BASE_URL
+  ANTHROPIC_*
+
+  Eso sugiere que pensaron en modelos alternativos accesibles desde el entorno del agente, especialmente vía Claude-compatible endpoints o
+  configuraciones del CLI.
+
+  Pero Zenith no trae providers propios llamados glm, gemini o deepseek. No podés hacer hoy:
+
+  uv run zenith init --agent glm
+  uv run zenith init --agent gemini
+  uv run zenith init --agent deepseek
+
+  Eso fallaría porque --agent solo acepta claude o codex.
+
+  La forma práctica sería:
+
+  # usar Claude Code como host/orquestador
+  uv run zenith init --workspace-dir /ruta/proyecto --agent claude
+
+  y configurar Claude Code o su backend para usar GLM/DeepSeek si tu instalación lo permite.
+
+  O:
+
+  # usar Codex como host/orquestador
+  uv run zenith init --workspace-dir /ruta/proyecto --agent codex
+
+  y configurar Codex/modelo desde .codex/config.toml o su entorno.
+
+  Para usar Gemini CLI como host real, habría que implementar un provider gemini en Zenith y resolver dos cosas: config MCP para Gemini CLI y
+  un runner ACP para workers. Sin eso, Gemini puede aparecer como modelo usado por algún CLI compatible, pero no como provider Zenith de
+  primera clase.
+
+  Resumen corto:
+
+  Claude Code: sí, soportado.
+  Codex: sí, soportado.
+  OpenCode: posible, requiere provider + ACP/MCP compatible.
+  Antigravity: posible, mismo requisito.
+  GLM/DeepSeek: posible indirectamente vía Claude/Codex si el CLI los soporta.
+  Gemini CLI: no directo en este repo; requeriría agregar provider.
+
+  La regla mental: Zenith no habla con “modelos” directamente; habla con CLIs/adaptadores. El modelo queda detrás del CLI.
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
