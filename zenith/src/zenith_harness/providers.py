@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-ProviderName = Literal["claude", "codex", "antigravity", "opencode"]
+ProviderName = Literal["claude", "codex", "hermes", "antigravity", "opencode"]
 ConfigFormat = Literal["mcp_json", "codex_config"]
 
 ORCHESTRATOR_PROVIDER_NAMES: tuple[ProviderName, ...] = (
@@ -11,12 +11,14 @@ ORCHESTRATOR_PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "codex",
     "antigravity",
     "opencode",
+    "hermes",
 )
 WORKER_PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "claude",
     "codex",
     "antigravity",
     "opencode",
+    "hermes",
 )
 
 
@@ -159,6 +161,17 @@ PROVIDERS: dict[ProviderName, ProviderDefinition] = {
         default_worker_acp_command="opencode acp",
         agent_output_dir=".opencode/agents",
         orchestrator_prompt_output_path=".opencode/orchestrator_prompt.md",
+    ),
+    "hermes": ProviderDefinition(
+        name="hermes",
+        skill_dirs=(".hermes/skills", ".agents/skills"),
+        skill_alias_dirs=(".hermes/skills", ".agents/skills"),
+        config_format="mcp_json",
+        default_worker_acp_command="hermes acp",
+        agent_output_dir=".hermes/agents",
+        orchestrator_prompt_output_path=".hermes/orchestrator_prompt.md",
+        acp_supports_system_prompt=True,
+        acp_runtime_mode=None,
     ),
 }
 

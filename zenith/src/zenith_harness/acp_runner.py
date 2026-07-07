@@ -95,14 +95,18 @@ def _augment_acp_command(command: str, provider) -> str:
     For codex-acp this is the no-ask, no-sandbox combo — equivalent to
     `codex --dangerously-bypass-approvals-and-sandbox`, which codex-acp
     does not expose as a flag but accepts via `-c` overrides.
+
+    For hermes the command is passed through unchanged.
     """
-    if getattr(provider, "name", None) == "codex":
+    name = getattr(provider, "name", None)
+    if name == "codex":
         return (
             command
             + ' -c sandbox_mode="danger-full-access"'
             + ' -c approval_policy="never"'
             + ' -c model_reasoning_effort="xhigh"'
         )
+    # hermes: no-op
     return command
 
 
@@ -113,12 +117,16 @@ def _acp_subprocess_env(provider) -> dict[str, str]:
     `/usr/bin/env node`, and pass sandbox-disable hints through env. The
     command line also receives `sandbox_mode="danger-full-access"` in
     `_augment_acp_command`.
+
+    For hermes the env is passed through unchanged.
     """
     env = os.environ.copy()
-    if getattr(provider, "name", None) == "codex":
+    name = getattr(provider, "name", None)
+    if name == "codex":
         # Env-var hints — harmless if codex ignores them.
         env["CODEX_SANDBOX"] = "danger-full-access"
         env["CODEX_DISABLE_SANDBOX"] = "1"
+    # hermes: no special env needed
     return env
 
 
@@ -780,6 +788,13 @@ class ACPNodeRunner:
             process, workspace_dir, session_update_handler=tracker.handle_session_update
         )
         await client.start()
+        # Drain the reviewer subprocess's stderr continuously. Without this the
+        # OS stderr pipe (~64 KB) fills on a chatty reviewer (it reads the whole
+        # workspace and emits many tool calls), the child blocks on its stderr
+        # write, the ACP/stdout channel stalls, and the reviewer can never call
+        # submit_terminal_review -> spurious "terminal reviewer crashed". run_node
+        # already does this for workers; run_terminal_review omitted it.
+        stderr_task = asyncio.create_task(_drain_stream_chunks(process.stderr))
         try:
             await client.send_request(
                 "initialize",
@@ -809,6 +824,10 @@ class ACPNodeRunner:
             )
             await self._poll_attempt_file(report_path, timeout=2.0)
         finally:
+            try:
+                stderr_task.cancel()
+            except Exception:  # noqa: BLE001
+                pass
             await tracker.flush()
             if process.returncode is None:
                 try:
