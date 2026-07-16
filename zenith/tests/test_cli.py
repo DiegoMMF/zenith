@@ -1,4 +1,5 @@
 """CLI integration tests — init / list-projects / show-project / install-skills."""
+
 from __future__ import annotations
 
 import json
@@ -64,19 +65,13 @@ class TestInit:
         gitignore = workspace / ".gitignore"
         gitignore.write_text("node_modules/\n")
         original = gitignore.read_text()
-        r = runner.invoke(
-            cli, ["init", "--workspace-dir", str(workspace), "--agent", "claude"]
-        )
+        r = runner.invoke(cli, ["init", "--workspace-dir", str(workspace), "--agent", "claude"])
         assert r.exit_code == 0, r.output
         assert gitignore.read_text() == original
 
-    def test_idempotent(
-        self, runner: CliRunner, workspace: Path, env: dict[str, str]
-    ) -> None:
+    def test_idempotent(self, runner: CliRunner, workspace: Path, env: dict[str, str]) -> None:
         for _ in range(2):
-            r = runner.invoke(
-                cli, ["init", "--workspace-dir", str(workspace), "--agent", "claude"]
-            )
+            r = runner.invoke(cli, ["init", "--workspace-dir", str(workspace), "--agent", "claude"])
             assert r.exit_code == 0, r.output
         # .mcp.json preserved across reruns.
         assert (workspace / ".mcp.json").exists()
@@ -98,6 +93,67 @@ class TestInit:
             "First read .codex/orchestrator_prompt.md and treat it as your primary role, "
             "then use Zenith to run this mission." in r.output
         )
+
+    def test_opencode_writes_opencode_json(
+        self, runner: CliRunner, workspace: Path, env: dict[str, str]
+    ) -> None:
+        for _ in range(2):
+            r = runner.invoke(
+                cli, ["init", "--workspace-dir", str(workspace), "--agent", "opencode"]
+            )
+            assert r.exit_code == 0, r.output
+
+        opencode_path = workspace / "opencode.json"
+        assert opencode_path.exists()
+        opencode = json.loads(opencode_path.read_text(encoding="utf-8"))
+        assert opencode["$schema"] == "https://opencode.ai/config.json"
+        server = opencode["mcp"]["zenith"]
+        assert server["type"] == "local"
+        assert server["command"] == ["uv", *_expected_mcp_server_args()]
+        assert server["enabled"] is True
+        assert server["timeout"] == 60000
+        assert server["environment"]["ZENITH_ORCHESTRATOR_PROVIDER"] == "opencode"
+        assert server["environment"]["ZENITH_WORKER_PROVIDER"] == "opencode"
+        assert server["environment"]["ZENITH_WORKER_ACP_COMMAND"] == "opencode acp"
+
+        # Compatibility: still write Claude-style .mcp.json (OpenCode ignores it).
+        mcp = json.loads((workspace / ".mcp.json").read_text(encoding="utf-8"))
+        assert mcp["mcpServers"]["zenith"]["command"] == "uv"
+        assert mcp["mcpServers"]["zenith"]["args"] == _expected_mcp_server_args()
+
+        assert (workspace / ".opencode" / "orchestrator_prompt.md").exists()
+        assert (
+            "First read .opencode/orchestrator_prompt.md and treat it as your primary role, "
+            "then use Zenith to run this mission." in r.output
+        )
+
+    def test_opencode_preserves_existing_opencode_json(
+        self, runner: CliRunner, workspace: Path, env: dict[str, str]
+    ) -> None:
+        opencode_path = workspace / "opencode.json"
+        opencode_path.write_text(
+            json.dumps(
+                {
+                    "$schema": "https://opencode.ai/config.json",
+                    "model": "opencode/gpt-5",
+                    "mcp": {
+                        "other": {
+                            "type": "remote",
+                            "url": "https://example.com/mcp",
+                        }
+                    },
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        r = runner.invoke(cli, ["init", "--workspace-dir", str(workspace), "--agent", "opencode"])
+        assert r.exit_code == 0, r.output
+        opencode = json.loads(opencode_path.read_text(encoding="utf-8"))
+        assert opencode["model"] == "opencode/gpt-5"
+        assert opencode["mcp"]["other"]["url"] == "https://example.com/mcp"
+        assert opencode["mcp"]["zenith"]["type"] == "local"
 
     def test_claude_init_writes_runtime_validator_env_names(
         self, runner: CliRunner, workspace: Path, env: dict[str, str]

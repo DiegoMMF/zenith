@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 ProviderName = Literal["claude", "codex", "hermes", "antigravity", "opencode"]
-ConfigFormat = Literal["mcp_json", "codex_config"]
+ConfigFormat = Literal["mcp_json", "codex_config", "opencode_config"]
 
 ORCHESTRATOR_PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "claude",
@@ -157,7 +157,7 @@ PROVIDERS: dict[ProviderName, ProviderDefinition] = {
         name="opencode",
         skill_dirs=(".opencode/skills", ".agents/skills"),
         skill_alias_dirs=(".opencode/skills", ".agents/skills"),
-        config_format="mcp_json",
+        config_format="opencode_config",
         default_worker_acp_command="opencode acp",
         agent_output_dir=".opencode/agents",
         orchestrator_prompt_output_path=".opencode/orchestrator_prompt.md",

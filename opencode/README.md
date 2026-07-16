@@ -52,7 +52,11 @@ uv run zenith init --workspace-dir /ruta/a/mi-proyecto --agent opencode
 ```
 
 **¿Qué hace esto?**
-Zenith irá a tu proyecto e instalará carpetas invisibles (como `.opencode/` y `.agents/`) que contienen las reglas estrictas y las herramientas que el agente necesita.
+Zenith irá a tu proyecto e instalará:
+
+- Carpetas como `.opencode/` y `.agents/` con las reglas y skills del orquestador.
+- `opencode.json` con el servidor MCP de Zenith bajo `mcp.zenith` (esto es lo que OpenCode lee).
+- `.mcp.json` por compatibilidad con otros hosts; OpenCode lo ignora.
 
 ### Paso B: Despertar al Orquestador
 

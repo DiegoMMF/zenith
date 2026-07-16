@@ -52,7 +52,7 @@ Claude Code (orchestrator)
 
 | Layer | Files | Responsibility |
 |---|---|---|
-| **CLI** | `cli.py` | `zenith init` (writes `.mcp.json` / `.codex/config.toml` + installs prompts/skills/agents), `zenith-server` (starts MCP) |
+| **CLI** | `cli.py` | `zenith init` (writes `.mcp.json` / `opencode.json` / `.codex/config.toml` + installs prompts/skills/agents), `zenith-server` (starts MCP) |
 | **MCP server** | `server.py` | 3 server modes: `orchestrator` (7 tools), `worker` (1 tool: `end_node`), `terminal-reviewer` (1 tool: `submit_terminal_review`). Uses `fastmcp`. |
 | **Controller** | `controller.py` | Routes the 7 MCP tool calls. Owns envelope construction, attention validation, task-list patch application. Stateless per-call — always reloads from disk. |
 | **Coordinator** | `coordinator.py` | State-machine kernel. `step()` advances by one transition; `advance_project` loops `step()` until `attention_needed`, `terminal`, or `idle`. Dispatches work/validate nodes in parallel. |
@@ -77,7 +77,7 @@ Tasks are `work | validate | gate` with `depends_on` ids. The coordinator comput
 
 ### Providers
 
-`providers.py` defines `claude` and `codex` as the only supported provider names. Each provider specifies its config format (`mcp_json` vs `codex_config`), ACP command, skill dirs, and agent output dir. Adding a new CLI requires a new `ProviderDefinition` entry there plus bundled assets under `bundled/providers/<name>/`.
+`providers.py` defines `claude`, `codex`, `antigravity`, and `opencode` as supported provider names. Each provider specifies its config format (`mcp_json`, `codex_config`, or `opencode_config`), ACP command, skill dirs, and agent output dir. Adding a new CLI requires a new `ProviderDefinition` entry there plus bundled assets under `bundled/providers/<name>/`. OpenCode reads MCP from `opencode.json` (`mcp.zenith`); `.mcp.json` is still written for harness compatibility but OpenCode ignores it.
 
 ### Key env vars (runtime)
 
