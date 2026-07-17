@@ -2,6 +2,13 @@
 import json
 import sys
 import os
+import subprocess
+import re
+from pathlib import Path
+
+global_state = {
+    "cwd": os.getcwd()
+}
 
 def respond(message_id, result=None, error=None):
     response = {"jsonrpc": "2.0", "id": message_id}
@@ -36,9 +43,67 @@ def main():
             
             if method == "initialize":
                 respond(msg_id, result={"capabilities": {"tools": {}, "streaming": True}})
+            elif method == "session/new":
+                cwd = req.get("params", {}).get("cwd", os.getcwd())
+                global_state["cwd"] = cwd
+                respond(msg_id, result={"sessionId": "session-default"})
+            elif method == "session/prompt":
+                prompt_items = req.get("params", {}).get("prompt", [])
+                prompt_text = ""
+                if prompt_items:
+                    prompt_text = prompt_items[0].get("text", "")
+                
+                cwd = global_state.get("cwd", os.getcwd())
+                cmd = ["/home/diego/.local/bin/agy", "--prompt", prompt_text, "--dangerously-skip-permissions"]
+                
+                # Execute the agy CLI in the target workspace
+                res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+                agy_output = f"Stdout:\n{res.stdout}\n\nStderr:\n{res.stderr}"
+                
+                # Check environment details
+                handoff_path_str = os.environ.get("ZENITH_HANDOFF_PATH")
+                node_id = os.environ.get("ZENITH_NODE_ID", "unknown")
+                node_type = os.environ.get("ZENITH_NODE_TYPE", "work")
+                
+                if handoff_path_str:
+                    handoff_path = Path(handoff_path_str)
+                    handoff_path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    passed = (res.returncode == 0)
+                    
+                    if node_type == "validate":
+                        # Match targets like VAL-STYLE-001
+                        targets = list(set(re.findall(r"VAL-[A-Z0-9_-]+", prompt_text)))
+                        if not targets:
+                            targets = ["VAL-STYLE-GENERIC"]
+                        
+                        handoff_data = {
+                            "node_id": node_id,
+                            "done": True,
+                            "report": agy_output,
+                            "items": [
+                                {
+                                    "target_id": t,
+                                    "passed": passed,
+                                    "summary": f"Checked target {t}. Exit code {res.returncode}."
+                                } for t in targets
+                            ],
+                            "passed": passed
+                        }
+                    else:
+                        handoff_data = {
+                            "node_id": node_id,
+                            "done": passed,
+                            "report": agy_output,
+                            "request_attention": not passed
+                        }
+                        
+                    with open(handoff_path, "w", encoding="utf-8") as f:
+                        json.dump(handoff_data, f, indent=2)
+                
+                respond(msg_id, result={"stopReason": "complete" if res.returncode == 0 else "error"})
             elif method == "chat/completions" or method == "run":
-                # Simulated response for proof of concept
-                respond(msg_id, result={"status": "success", "content": "Simulated Antigravity response"})
+                respond(msg_id, result={"status": "success", "content": "Simulated response"})
             elif method == "ping":
                 respond(msg_id, result={"status": "ok"})
             elif method == "exit":
