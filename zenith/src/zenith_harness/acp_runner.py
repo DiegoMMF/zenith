@@ -594,12 +594,24 @@ class ACPNodeRunner:
         try:
             await self._wait_for_server_ready("127.0.0.1", mcp_port)
         except TimeoutError:
+            rc = mcp_process.returncode
+            stderr_bytes = b""
+            if rc is not None:
+                try:
+                    stderr_bytes = await asyncio.wait_for(mcp_process.stderr.read(), timeout=1.0)
+                except Exception:
+                    pass
             if mcp_process.returncode is None:
                 mcp_process.terminate()
             await _close_subprocess(mcp_process, timeout=5)
-            return self._synthesize_missing_handoff(
-                task, summary="Worker MCP server failed to start"
-            )
+            if not stderr_bytes:
+                try:
+                    stderr_bytes = await asyncio.wait_for(mcp_process.stderr.read(), timeout=1.0)
+                except Exception:
+                    pass
+            stderr_str = stderr_bytes.decode("utf-8", errors="replace")
+            summary = f"Worker MCP server failed to start. exit_code={rc} stderr={stderr_str}"
+            return self._synthesize_missing_handoff(task, summary=summary)
 
         worker_mcp_cfg = {
             "type": "http",
