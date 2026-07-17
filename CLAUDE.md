@@ -77,7 +77,7 @@ Tasks are `work | validate | gate` with `depends_on` ids. The coordinator comput
 
 ### Providers
 
-`providers.py` defines `claude`, `codex`, `antigravity`, and `opencode` as supported provider names. Each provider specifies its config format (`mcp_json`, `codex_config`, or `opencode_config`), ACP command, skill dirs, and agent output dir. Adding a new CLI requires a new `ProviderDefinition` entry there plus bundled assets under `bundled/providers/<name>/`. OpenCode reads MCP from `opencode.json` (`mcp.zenith`); `.mcp.json` is still written for harness compatibility but OpenCode ignores it.
+`providers.py` defines `claude`, `codex`, `antigravity`, and `opencode` as supported provider names. Each provider specifies its config format (`mcp_json`, `codex_config`, `opencode_config`, or `antigravity_config`), ACP command, skill dirs, and agent output dir. Adding a new CLI requires a new `ProviderDefinition` entry there plus bundled assets under `bundled/providers/<name>/`. OpenCode reads MCP from `opencode.json` (`mcp.zenith`); `.mcp.json` is still written for harness compatibility but OpenCode ignores it. Antigravity reads MCP from `.agents/mcp_config.json` (not `.mcp.json`).
 
 ### Key env vars (runtime)
 

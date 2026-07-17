@@ -155,6 +155,60 @@ class TestInit:
         assert opencode["mcp"]["other"]["url"] == "https://example.com/mcp"
         assert opencode["mcp"]["zenith"]["type"] == "local"
 
+    def test_antigravity_writes_agents_mcp_config(
+        self, runner: CliRunner, workspace: Path, env: dict[str, str]
+    ) -> None:
+        for _ in range(2):
+            r = runner.invoke(
+                cli, ["init", "--workspace-dir", str(workspace), "--agent", "antigravity"]
+            )
+            assert r.exit_code == 0, r.output
+
+        mcp_path = workspace / ".agents" / "mcp_config.json"
+        assert mcp_path.exists()
+        mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
+        server = mcp["mcpServers"]["zenith"]
+        assert server["command"] == "uv"
+        assert server["args"] == _expected_mcp_server_args()
+        assert server["env"]["ZENITH_ORCHESTRATOR_PROVIDER"] == "antigravity"
+        assert server["env"]["ZENITH_WORKER_PROVIDER"] == "antigravity"
+        assert server["env"]["ZENITH_WORKER_ACP_COMMAND"] == "python -m agy_acp_server"
+        assert not (workspace / ".mcp.json").exists()
+        assert (workspace / ".antigravity" / "orchestrator_prompt.md").exists()
+        assert (
+            "First read .antigravity/orchestrator_prompt.md and treat it as your primary role, "
+            "then use Zenith to run this mission." in r.output
+        )
+
+    def test_antigravity_preserves_existing_agents_mcp_config(
+        self, runner: CliRunner, workspace: Path, env: dict[str, str]
+    ) -> None:
+        mcp_path = workspace / ".agents" / "mcp_config.json"
+        mcp_path.parent.mkdir(parents=True, exist_ok=True)
+        mcp_path.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "other": {
+                            "command": "other-mcp",
+                            "args": [],
+                        }
+                    },
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        r = runner.invoke(
+            cli, ["init", "--workspace-dir", str(workspace), "--agent", "antigravity"]
+        )
+        assert r.exit_code == 0, r.output
+        mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
+        assert mcp["mcpServers"]["other"]["command"] == "other-mcp"
+        assert mcp["mcpServers"]["zenith"]["command"] == "uv"
+        assert mcp["mcpServers"]["zenith"]["args"] == _expected_mcp_server_args()
+
     def test_claude_init_writes_runtime_validator_env_names(
         self, runner: CliRunner, workspace: Path, env: dict[str, str]
     ) -> None:

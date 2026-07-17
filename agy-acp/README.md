@@ -52,7 +52,11 @@ uv run zenith init --workspace-dir /ruta/a/mi-proyecto --agent antigravity
 ```
 
 **¿Qué hace esto?**
-Zenith irá a tu proyecto e instalará carpetas invisibles (como `.antigravity/` y `.agents/`) que contienen las reglas estrictas y las herramientas que el agente necesita.
+Zenith irá a tu proyecto e instalará:
+
+- `.agents/mcp_config.json` — el servidor MCP de Zenith que **Antigravity CLI sí lee** (no uses `.mcp.json`; `agy` lo ignora)
+- `.antigravity/orchestrator_prompt.md` — el prompt de rol del orquestador
+- `.agents/skills/` y subagentes — playbooks y definiciones de workers
 
 ### Paso B: Despertar al Orquestador
 

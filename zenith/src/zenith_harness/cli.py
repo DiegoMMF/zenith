@@ -355,6 +355,15 @@ def _mcp_server_args() -> list[str]:
     ]
 
 
+def _zenith_stdio_mcp_server(*, env: dict[str, str], server_args: list[str]) -> dict:
+    return {
+        "type": "stdio",
+        "command": "uv",
+        "args": server_args,
+        "env": env,
+    }
+
+
 def _write_mcp_json(
     workspace: Path,
     *,
@@ -363,12 +372,26 @@ def _write_mcp_json(
 ) -> None:
     path = workspace / ".mcp.json"
     existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    existing.setdefault("mcpServers", {})["zenith"] = {
-        "type": "stdio",
-        "command": "uv",
-        "args": server_args,
-        "env": env,
-    }
+    existing.setdefault("mcpServers", {})["zenith"] = _zenith_stdio_mcp_server(
+        env=env, server_args=server_args
+    )
+    path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    click.echo(f"Wrote {path}")
+
+
+def _write_agents_mcp_config(
+    workspace: Path,
+    *,
+    env: dict[str, str],
+    server_args: list[str],
+) -> None:
+    """Write Antigravity workspace MCP config at `.agents/mcp_config.json`."""
+    path = workspace / ".agents" / "mcp_config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    existing.setdefault("mcpServers", {})["zenith"] = _zenith_stdio_mcp_server(
+        env=env, server_args=server_args
+    )
     path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
     click.echo(f"Wrote {path}")
 
@@ -409,6 +432,9 @@ def _write_bootstrap_config(
     if fmt == "mcp_json":
         env = {**env, **_forwarded_mcp_env()}
         _write_mcp_json(workspace, env=env, server_args=server_args)
+    elif fmt == "antigravity_config":
+        env = {**env, **_forwarded_mcp_env()}
+        _write_agents_mcp_config(workspace, env=env, server_args=server_args)
     elif fmt == "opencode_config":
         env = {**env, **_forwarded_mcp_env()}
         _write_opencode_json(workspace, env=env, server_args=server_args)
