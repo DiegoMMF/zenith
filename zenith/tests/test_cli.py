@@ -99,6 +99,108 @@ class TestInit:
             "then use Zenith to run this mission." in r.output
         )
 
+    def test_claude_init_writes_reasoning_effort_env(
+        self,
+        runner: CliRunner,
+        workspace: Path,
+        env: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("ZENITH_WORKER_REASONING_EFFORT", "high")
+        monkeypatch.setenv("ZENITH_VALIDATOR_REASONING_EFFORT", "medium")
+        monkeypatch.setenv("ZENITH_TERMINAL_REVIEWER_REASONING_EFFORT", "low")
+
+        r = runner.invoke(cli, ["init", "--workspace-dir", str(workspace), "--agent", "claude"])
+        assert r.exit_code == 0, r.output
+
+        mcp = json.loads((workspace / ".mcp.json").read_text(encoding="utf-8"))
+        server_env = mcp["mcpServers"]["zenith"]["env"]
+        assert server_env["ZENITH_WORKER_REASONING_EFFORT"] == "high"
+        assert server_env["ZENITH_VALIDATOR_REASONING_EFFORT"] == "medium"
+        assert server_env["ZENITH_TERMINAL_REVIEWER_REASONING_EFFORT"] == "low"
+
+    def test_codex_init_writes_reasoning_effort_env(
+        self,
+        runner: CliRunner,
+        workspace: Path,
+        env: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("ZENITH_WORKER_REASONING_EFFORT", "high")
+        monkeypatch.setenv("ZENITH_VALIDATOR_REASONING_EFFORT", "medium")
+        monkeypatch.setenv("ZENITH_TERMINAL_REVIEWER_REASONING_EFFORT", "low")
+
+        r = runner.invoke(cli, ["init", "--workspace-dir", str(workspace), "--agent", "codex"])
+        assert r.exit_code == 0, r.output
+
+        config = tomllib.loads(
+            (workspace / ".codex" / "config.toml").read_text(encoding="utf-8")
+        )
+        server_env = config["mcp_servers"]["zenith"]["env"]
+        assert server_env["ZENITH_WORKER_REASONING_EFFORT"] == "high"
+        assert server_env["ZENITH_VALIDATOR_REASONING_EFFORT"] == "medium"
+        assert server_env["ZENITH_TERMINAL_REVIEWER_REASONING_EFFORT"] == "low"
+
+    def test_init_reasoning_effort_flags_override_env(
+        self,
+        runner: CliRunner,
+        workspace: Path,
+        env: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("ZENITH_WORKER_REASONING_EFFORT", "xhigh")
+
+        r = runner.invoke(
+            cli,
+            [
+                "init",
+                "--workspace-dir",
+                str(workspace),
+                "--agent",
+                "claude",
+                "--worker-reasoning-effort",
+                "max",
+                "--validator-reasoning-effort",
+                "medium",
+            ],
+        )
+        assert r.exit_code == 0, r.output
+
+        mcp = json.loads((workspace / ".mcp.json").read_text(encoding="utf-8"))
+        server_env = mcp["mcpServers"]["zenith"]["env"]
+        # Flag beats the inherited shell env.
+        assert server_env["ZENITH_WORKER_REASONING_EFFORT"] == "max"
+        assert server_env["ZENITH_VALIDATOR_REASONING_EFFORT"] == "medium"
+        assert "ZENITH_TERMINAL_REVIEWER_REASONING_EFFORT" not in server_env
+
+    def test_init_invalid_inherited_effort_env_fails_despite_flag(
+        self,
+        runner: CliRunner,
+        workspace: Path,
+        env: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Flags override valid inherited settings; a broken env var is still a
+        # hard error — the same validation would raise at server launch, so
+        # masking it at init would only defer the failure.
+        monkeypatch.setenv("ZENITH_WORKER_REASONING_EFFORT", "turbo")
+
+        r = runner.invoke(
+            cli,
+            [
+                "init",
+                "--workspace-dir",
+                str(workspace),
+                "--agent",
+                "claude",
+                "--worker-reasoning-effort",
+                "max",
+            ],
+        )
+        assert r.exit_code != 0
+        assert isinstance(r.exception, ValueError)
+        assert "ZENITH_WORKER_REASONING_EFFORT" in str(r.exception)
+
     def test_claude_init_writes_runtime_validator_env_names(
         self, runner: CliRunner, workspace: Path, env: dict[str, str]
     ) -> None:
