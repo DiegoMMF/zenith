@@ -631,14 +631,20 @@ class ACPNodeRunner:
             project_id=project_id,
         )
 
-        # 3) Spawn the ACP agent.
+        # 3) Spawn the ACP agent. Explicitly inject Zenith context into the env.
+        acp_env = _acp_subprocess_env(role_config.worker_provider)
+        acp_env["ZENITH_PROJECT_ID"] = project_id
+        acp_env["ZENITH_MISSION_ID"] = mission_id
+        acp_env["ZENITH_NODE_ID"] = task.id
+        acp_env["ZENITH_NODE_TYPE"] = task.type
+        acp_env["ZENITH_HANDOFF_PATH"] = str(handoff_path)
         process = await asyncio.create_subprocess_shell(
             acp_command,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workspace_dir,
-            env=_acp_subprocess_env(role_config.worker_provider),
+            env=acp_env,
             limit=SUBPROCESS_STREAM_LIMIT,
         )
         progress_tracker = ACPProgressTracker(callback=progress_callback)
@@ -792,7 +798,12 @@ class ACPNodeRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workspace_dir,
-            env=_acp_subprocess_env(role_config.worker_provider),
+            env={
+                **_acp_subprocess_env(role_config.worker_provider),
+                "ZENITH_HANDOFF_PATH": str(report_path),
+                "ZENITH_NODE_TYPE": "terminal-review",
+                "ZENITH_NODE_ID": "terminal-reviewer",
+            },
             limit=SUBPROCESS_STREAM_LIMIT,
         )
         tracker = ACPProgressTracker(callback=progress_callback)
