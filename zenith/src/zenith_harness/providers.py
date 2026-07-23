@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-ProviderName = Literal["claude", "codex", "hermes", "antigravity", "opencode"]
-ConfigFormat = Literal["mcp_json", "codex_config"]
+ProviderName = Literal["claude", "codex", "hermes", "antigravity", "opencode", "omnigent"]
+ConfigFormat = Literal["mcp_json", "codex_config", "omnigent_yaml"]
 
 ORCHESTRATOR_PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "claude",
@@ -12,6 +12,7 @@ ORCHESTRATOR_PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "antigravity",
     "opencode",
     "hermes",
+    "omnigent",
 )
 WORKER_PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "claude",
@@ -173,6 +174,15 @@ PROVIDERS: dict[ProviderName, ProviderDefinition] = {
         acp_supports_system_prompt=True,
         acp_runtime_mode=None,
     ),
+    "omnigent": ProviderDefinition(
+        name="omnigent",
+        skill_dirs=(".omnigent/skills", ".agents/skills"),
+        skill_alias_dirs=(".omnigent/skills", ".agents/skills"),
+        config_format="omnigent_yaml",
+        default_worker_acp_command=None,
+        agent_output_dir=None,
+        orchestrator_prompt_output_path=".omnigent/zenith-orchestrator/AGENTS.md",
+    ),
 }
 
 
@@ -191,6 +201,6 @@ def provider_names_for_role(role: Literal["orchestrator", "worker"]) -> tuple[st
 
 
 def default_worker_provider_name(orchestrator_provider_name: str) -> str:
-    if orchestrator_provider_name in PROVIDERS:
+    if orchestrator_provider_name in WORKER_PROVIDER_NAMES:
         return orchestrator_provider_name
     return "claude"
