@@ -116,10 +116,7 @@ class TestInit:
         assert server["environment"]["ZENITH_WORKER_PROVIDER"] == "opencode"
         assert server["environment"]["ZENITH_WORKER_ACP_COMMAND"] == "opencode acp"
 
-        # Compatibility: still write Claude-style .mcp.json (OpenCode ignores it).
-        mcp = json.loads((workspace / ".mcp.json").read_text(encoding="utf-8"))
-        assert mcp["mcpServers"]["zenith"]["command"] == "uv"
-        assert mcp["mcpServers"]["zenith"]["args"] == _expected_mcp_server_args()
+        assert not (workspace / ".mcp.json").exists()
 
         assert (workspace / ".opencode" / "orchestrator_prompt.md").exists()
         assert (

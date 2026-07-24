@@ -438,8 +438,6 @@ def _write_bootstrap_config(
     elif fmt == "opencode_config":
         env = {**env, **_forwarded_mcp_env()}
         _write_opencode_json(workspace, env=env, server_args=server_args)
-        # Compatibility for harness hosts that still read Claude-style .mcp.json.
-        _write_mcp_json(workspace, env=env, server_args=server_args)
     elif fmt == "codex_config":
         config_path = workspace / ".codex" / "config.toml"
         config_path.parent.mkdir(parents=True, exist_ok=True)

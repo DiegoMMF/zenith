@@ -56,7 +56,6 @@ Zenith irá a tu proyecto e instalará:
 
 - Carpetas como `.opencode/` y `.agents/` con las reglas y skills del orquestador.
 - `opencode.json` con el servidor MCP de Zenith bajo `mcp.zenith` (esto es lo que OpenCode lee).
-- `.mcp.json` por compatibilidad con otros hosts; OpenCode lo ignora.
 
 ### Paso B: Despertar al Orquestador
 
