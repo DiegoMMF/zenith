@@ -115,7 +115,7 @@ def init(
 
     # 1) MCP / Codex config
     storage_env = _storage_env(zenith_home=zenith_home, workspace=workspace, selection=selection)
-    _write_bootstrap_config(workspace, selection, storage_env)
+    _write_bootstrap_config(workspace, selection, storage_env, config)
 
     # 2) Per-provider agents + orchestrator prompt
     for provider in selection.providers():
@@ -344,22 +344,24 @@ def _zenith_project_root() -> Path:
     )
 
 
-def _mcp_server_args() -> list[str]:
-    return [
-        "run",
-        "--project",
-        str(_zenith_project_root()),
-        "zenith-server",
-        "--mode",
-        "orchestrator",
-    ]
+def _deploy_and_resolve_mcp_cmd(workspace: Path, config: HarnessConfig) -> list[str]:
+    script_dir = workspace / ".zenith" / "mcp"
+    script_dir.mkdir(parents=True, exist_ok=True)
+    script_path = script_dir / "zenith-mcp.sh"
+
+    template = (config.bundled_dir / "scripts" / "zenith-mcp.sh").read_text(encoding="utf-8")
+    content = template.replace("{{ZENITH_PROJECT_ROOT}}", str(_zenith_project_root()))
+    script_path.write_text(content, encoding="utf-8")
+    script_path.chmod(0o755)
+
+    return ["bash", ".zenith/mcp/zenith-mcp.sh", "--mode", "orchestrator"]
 
 
-def _zenith_stdio_mcp_server(*, env: dict[str, str], server_args: list[str]) -> dict:
+def _zenith_stdio_mcp_from_cmd(*, env: dict[str, str], mcp_cmd: list[str]) -> dict:
     return {
         "type": "stdio",
-        "command": "uv",
-        "args": server_args,
+        "command": mcp_cmd[0],
+        "args": mcp_cmd[1:],
         "env": env,
     }
 
@@ -368,12 +370,12 @@ def _write_mcp_json(
     workspace: Path,
     *,
     env: dict[str, str],
-    server_args: list[str],
+    mcp_cmd: list[str],
 ) -> None:
     path = workspace / ".mcp.json"
     existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    existing.setdefault("mcpServers", {})["zenith"] = _zenith_stdio_mcp_server(
-        env=env, server_args=server_args
+    existing.setdefault("mcpServers", {})["zenith"] = _zenith_stdio_mcp_from_cmd(
+        env=env, mcp_cmd=mcp_cmd
     )
     path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
     click.echo(f"Wrote {path}")
@@ -383,14 +385,14 @@ def _write_agents_mcp_config(
     workspace: Path,
     *,
     env: dict[str, str],
-    server_args: list[str],
+    mcp_cmd: list[str],
 ) -> None:
     """Write Antigravity workspace MCP config at `.agents/mcp_config.json`."""
     path = workspace / ".agents" / "mcp_config.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    existing.setdefault("mcpServers", {})["zenith"] = _zenith_stdio_mcp_server(
-        env=env, server_args=server_args
+    existing.setdefault("mcpServers", {})["zenith"] = _zenith_stdio_mcp_from_cmd(
+        env=env, mcp_cmd=mcp_cmd
     )
     path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
     click.echo(f"Wrote {path}")
@@ -400,7 +402,7 @@ def _write_opencode_json(
     workspace: Path,
     *,
     env: dict[str, str],
-    server_args: list[str],
+    mcp_cmd: list[str],
 ) -> None:
     path = workspace / "opencode.json"
     existing = (
@@ -412,7 +414,7 @@ def _write_opencode_json(
         existing["$schema"] = "https://opencode.ai/config.json"
     existing.setdefault("mcp", {})["zenith"] = {
         "type": "local",
-        "command": ["uv", *server_args],
+        "command": mcp_cmd,
         "enabled": True,
         "environment": env,
         "timeout": 60000,
@@ -425,19 +427,20 @@ def _write_bootstrap_config(
     workspace: Path,
     selection: ProviderSelection,
     storage_env: dict[str, str],
+    config: HarnessConfig,
 ) -> None:
     fmt = selection.orchestrator.config_format
     env = {**selection.env(), **storage_env}
-    server_args = _mcp_server_args()
+    mcp_cmd = _deploy_and_resolve_mcp_cmd(workspace, config)
     if fmt == "mcp_json":
         env = {**env, **_forwarded_mcp_env()}
-        _write_mcp_json(workspace, env=env, server_args=server_args)
+        _write_mcp_json(workspace, env=env, mcp_cmd=mcp_cmd)
     elif fmt == "antigravity_config":
         env = {**env, **_forwarded_mcp_env()}
-        _write_agents_mcp_config(workspace, env=env, server_args=server_args)
+        _write_agents_mcp_config(workspace, env=env, mcp_cmd=mcp_cmd)
     elif fmt == "opencode_config":
         env = {**env, **_forwarded_mcp_env()}
-        _write_opencode_json(workspace, env=env, server_args=server_args)
+        _write_opencode_json(workspace, env=env, mcp_cmd=mcp_cmd)
     elif fmt == "codex_config":
         config_path = workspace / ".codex" / "config.toml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -450,8 +453,8 @@ def _write_bootstrap_config(
             "memories = true\n"
             "# BEGIN zenith\n"
             "[mcp_servers.zenith]\n"
-            'command = "uv"\n'
-            f"args = {json.dumps(server_args)}\n"
+            f'command = "{mcp_cmd[0]}"\n'
+            f"args = {json.dumps(mcp_cmd[1:])}\n"
             "startup_timeout_sec = 10\n"
             "tool_timeout_sec = 1000000\n"
             "\n"

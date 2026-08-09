@@ -24,16 +24,16 @@ def env(harness_home: Path, workspace: Path, monkeypatch) -> dict[str, str]:
     return {"ZENITH_HOME": str(harness_home)}
 
 
-def _expected_mcp_server_args() -> list[str]:
-    zenith_root = Path(__file__).resolve().parents[1]
-    return [
-        "run",
-        "--project",
-        str(zenith_root),
-        "zenith-server",
-        "--mode",
-        "orchestrator",
-    ]
+def _expected_mcp_wrapper_args() -> list[str]:
+    return [".zenith/mcp/zenith-mcp.sh", "--mode", "orchestrator"]
+
+
+def _assert_mcp_wrapper_deployed(workspace: Path) -> None:
+    wrapper = workspace / ".zenith" / "mcp" / "zenith-mcp.sh"
+    assert wrapper.exists()
+    assert wrapper.stat().st_mode & 0o111  # executable
+    content = wrapper.read_text()
+    assert 'name = "zenith-harness"' in content or "{{ZENITH_PROJECT_ROOT}}" not in content
 
 
 class TestInit:
@@ -41,23 +41,25 @@ class TestInit:
         self, runner: CliRunner, workspace: Path, env: dict[str, str]
     ) -> None:
         """`zenith init` writes MCP config + provider agents + orchestrator prompt
-        but does NOT create the project bucket or workspace shims — those are
-        created by `start_project` at the first MCP call."""
+        + platform-independent MCP wrapper, but does NOT create the project bucket
+        or workspace shims — those are created by `start_project` at the first MCP
+        call."""
         result = runner.invoke(
             cli, ["init", "--workspace-dir", str(workspace), "--agent", "claude"]
         )
         assert result.exit_code == 0, result.output
-        # Workspace stays clean of .zenith/ — bucket lives under ZENITH_HOME.
-        assert not (workspace / ".zenith").exists()
-        # No symlink shims either — start_project handles them.
+        # The MCP wrapper is deployed under .zenith/mcp/
+        _assert_mcp_wrapper_deployed(workspace)
+        # No project bucket or symlink shims — start_project handles them.
+        assert not (workspace / ".zenith" / "projects").exists()
         assert not (workspace / "AGENTS.md").exists()
         # MCP config + .claude/agents/ are written.
         assert (workspace / ".mcp.json").exists()
         mcp = json.loads((workspace / ".mcp.json").read_text())
         assert "zenith" in mcp["mcpServers"]
         server = mcp["mcpServers"]["zenith"]
-        assert server["command"] == "uv"
-        assert server["args"] == _expected_mcp_server_args()
+        assert server["command"] == "bash"
+        assert server["args"] == _expected_mcp_wrapper_args()
 
     def test_init_does_not_touch_gitignore(
         self, runner: CliRunner, workspace: Path, env: dict[str, str]
@@ -85,8 +87,8 @@ class TestInit:
         assert config_path.exists()
         config = tomllib.loads(config_path.read_text(encoding="utf-8"))
         server = config["mcp_servers"]["zenith"]
-        assert server["command"] == "uv"
-        assert server["args"] == _expected_mcp_server_args()
+        assert server["command"] == "bash"
+        assert server["args"] == _expected_mcp_wrapper_args()
         assert f"Initialized v5 project workspace at {workspace}" in r.output
         assert "Start your agent from the initialized project workspace" in r.output
         assert (
@@ -109,7 +111,7 @@ class TestInit:
         assert opencode["$schema"] == "https://opencode.ai/config.json"
         server = opencode["mcp"]["zenith"]
         assert server["type"] == "local"
-        assert server["command"] == ["uv", *_expected_mcp_server_args()]
+        assert server["command"] == ["bash", *_expected_mcp_wrapper_args()]
         assert server["enabled"] is True
         assert server["timeout"] == 60000
         assert server["environment"]["ZENITH_ORCHESTRATOR_PROVIDER"] == "opencode"
@@ -165,8 +167,8 @@ class TestInit:
         assert mcp_path.exists()
         mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
         server = mcp["mcpServers"]["zenith"]
-        assert server["command"] == "uv"
-        assert server["args"] == _expected_mcp_server_args()
+        assert server["command"] == "bash"
+        assert server["args"] == _expected_mcp_wrapper_args()
         assert server["env"]["ZENITH_ORCHESTRATOR_PROVIDER"] == "antigravity"
         assert server["env"]["ZENITH_WORKER_PROVIDER"] == "antigravity"
         assert server["env"]["ZENITH_WORKER_ACP_COMMAND"] == "python -m agy_acp_server"
@@ -203,8 +205,8 @@ class TestInit:
         assert r.exit_code == 0, r.output
         mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
         assert mcp["mcpServers"]["other"]["command"] == "other-mcp"
-        assert mcp["mcpServers"]["zenith"]["command"] == "uv"
-        assert mcp["mcpServers"]["zenith"]["args"] == _expected_mcp_server_args()
+        assert mcp["mcpServers"]["zenith"]["command"] == "bash"
+        assert mcp["mcpServers"]["zenith"]["args"] == _expected_mcp_wrapper_args()
 
     def test_claude_init_writes_runtime_validator_env_names(
         self, runner: CliRunner, workspace: Path, env: dict[str, str]
