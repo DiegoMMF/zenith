@@ -5,6 +5,7 @@ We don't run a real `claude-agent-acp` here; we use the bundled
 mechanic. The worker MCP server subprocess is bypassed: the mock agent
 writes directly to ZENITH_HANDOFF_PATH itself.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -70,9 +71,7 @@ def project_setup(config: HarnessConfig, workspace: Path):
     not shutil.which("python3") and not Path(sys.executable).exists(),
     reason="Python interpreter unavailable",
 )
-def test_run_node_with_mock_agent(
-    config: HarnessConfig, project_setup, workspace: Path
-):
+def test_run_node_with_mock_agent(config: HarnessConfig, project_setup, workspace: Path):
     """End-to-end via the mock agent (NO real worker MCP server subprocess —
     we point at a free port that nothing binds to and rely on the mock to
     write the handoff file itself).
@@ -92,7 +91,8 @@ def test_run_node_with_mock_agent(
 
         async def _no_op_server(*args, **kwargs):
             return await asyncio.create_subprocess_exec(
-                "sleep", "30",
+                "sleep",
+                "30",
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -155,8 +155,21 @@ def test_augment_acp_command_codex_appends_bypass_flags():
     assert out.startswith("codex-acp ")
 
 
+def test_augment_acp_command_codex_reasoning_effort_override():
+    out = _augment_acp_command("codex-acp", PROVIDERS["codex"], reasoning_effort="medium")
+    assert 'model_reasoning_effort="medium"' in out
+    assert "xhigh" not in out
+    # The bypass flags are effort-independent.
+    assert 'sandbox_mode="danger-full-access"' in out
+    assert 'approval_policy="never"' in out
+
+
 def test_augment_acp_command_claude_untouched():
     assert _augment_acp_command("claude-agent-acp", PROVIDERS["claude"]) == "claude-agent-acp"
+    assert (
+        _augment_acp_command("claude-agent-acp", PROVIDERS["claude"], reasoning_effort="low")
+        == "claude-agent-acp"
+    )
 
 
 def test_codex_acp_env_preserves_node_path_when_bwrap_is_present(

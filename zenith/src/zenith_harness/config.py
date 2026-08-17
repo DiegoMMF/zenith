@@ -1,4 +1,5 @@
 """v5 HarnessConfig. See specs/memory_v2/PRODUCT.md for layout."""
+
 from __future__ import annotations
 
 import os
@@ -13,6 +14,14 @@ from .providers import (
 )
 
 DEFAULT_MAX_PARALLEL_NODES = 4
+
+# codex-acp `model_reasoning_effort` values. Also a safety allowlist: the
+# resolved value is spliced into a shell command line by acp_runner. Codex's
+# "ultra" is deliberately excluded: it is not a reasoning tier (codex
+# downgrades the request to "max" on the wire) but a switch to proactive
+# multi-agent mode — a lane spawning its own agent swarm inside a harness
+# that already orchestrates and validates per-lane work.
+VALID_REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
 
 
 def _bundled_dir() -> Path:
@@ -35,6 +44,20 @@ def _resolve_max_parallel(value: str | None) -> int:
     return max(1, parsed)
 
 
+def _resolve_reasoning_effort(value: str | None, *, env_var: str) -> str | None:
+    """None passes through (provider default); anything else must be on the
+    allowlist — a typo silently ignored would spend xhigh the user thought
+    they had dialed down."""
+    if not value:
+        return None
+    if value not in VALID_REASONING_EFFORTS:
+        raise ValueError(
+            f"{env_var}={value!r} is not a valid reasoning effort; "
+            f"choose one of: {', '.join(VALID_REASONING_EFFORTS)}"
+        )
+    return value
+
+
 @dataclass(frozen=True)
 class HarnessConfig:
     """Static configuration loaded from env. Per-call overrides allowed via `with_*`."""
@@ -50,6 +73,11 @@ class HarnessConfig:
     terminal_reviewer_provider_name: str | None
     terminal_reviewer_acp_command: str | None
     max_parallel_nodes: int = DEFAULT_MAX_PARALLEL_NODES
+    # Per-role reasoning effort for providers whose ACP command accepts one
+    # (codex today). None means the provider default ("xhigh" for codex).
+    worker_reasoning_effort: str | None = None
+    validator_reasoning_effort: str | None = None
+    terminal_reviewer_reasoning_effort: str | None = None
 
     @classmethod
     def discover(cls) -> HarnessConfig:
@@ -59,29 +87,21 @@ class HarnessConfig:
                 "bucket is always $ZENITH_HOME/projects/<pid>/. Unset the env var."
             )
         harness_home = (
-            Path(os.environ.get("ZENITH_HOME") or (Path.home() / ".zenith"))
-            .expanduser()
-            .resolve()
+            Path(os.environ.get("ZENITH_HOME") or (Path.home() / ".zenith")).expanduser().resolve()
         )
         projects_dir = (
             _resolve_optional_path(os.environ.get("ZENITH_PROJECTS_DIR"))
             or harness_home / "projects"
         )
-        orchestrator_provider_name = os.environ.get(
-            "ZENITH_ORCHESTRATOR_PROVIDER", "claude"
-        )
+        orchestrator_provider_name = os.environ.get("ZENITH_ORCHESTRATOR_PROVIDER", "claude")
         worker_provider_name = os.environ.get(
             "ZENITH_WORKER_PROVIDER"
         ) or default_worker_provider_name(orchestrator_provider_name)
         worker_acp_command = os.environ.get("ZENITH_WORKER_ACP_COMMAND")
         validator_provider_name = os.environ.get("ZENITH_VALIDATOR_PROVIDER")
         validator_acp_command = os.environ.get("ZENITH_VALIDATOR_ACP_COMMAND")
-        terminal_reviewer_provider_name = os.environ.get(
-            "ZENITH_TERMINAL_REVIEWER_PROVIDER"
-        )
-        terminal_reviewer_acp_command = os.environ.get(
-            "ZENITH_TERMINAL_REVIEWER_ACP_COMMAND"
-        )
+        terminal_reviewer_provider_name = os.environ.get("ZENITH_TERMINAL_REVIEWER_PROVIDER")
+        terminal_reviewer_acp_command = os.environ.get("ZENITH_TERMINAL_REVIEWER_ACP_COMMAND")
         return cls(
             bundled_dir=_bundled_dir(),
             harness_home=harness_home,
@@ -93,8 +113,18 @@ class HarnessConfig:
             validator_acp_command=validator_acp_command,
             terminal_reviewer_provider_name=terminal_reviewer_provider_name,
             terminal_reviewer_acp_command=terminal_reviewer_acp_command,
-            max_parallel_nodes=_resolve_max_parallel(
-                os.environ.get("ZENITH_MAX_PARALLEL_NODES")
+            max_parallel_nodes=_resolve_max_parallel(os.environ.get("ZENITH_MAX_PARALLEL_NODES")),
+            worker_reasoning_effort=_resolve_reasoning_effort(
+                os.environ.get("ZENITH_WORKER_REASONING_EFFORT"),
+                env_var="ZENITH_WORKER_REASONING_EFFORT",
+            ),
+            validator_reasoning_effort=_resolve_reasoning_effort(
+                os.environ.get("ZENITH_VALIDATOR_REASONING_EFFORT"),
+                env_var="ZENITH_VALIDATOR_REASONING_EFFORT",
+            ),
+            terminal_reviewer_reasoning_effort=_resolve_reasoning_effort(
+                os.environ.get("ZENITH_TERMINAL_REVIEWER_REASONING_EFFORT"),
+                env_var="ZENITH_TERMINAL_REVIEWER_REASONING_EFFORT",
             ),
         )
 
@@ -148,11 +178,7 @@ class HarnessConfig:
         return ProviderSelection(
             orchestrator=self.orchestrator_provider,
             worker=self.worker_provider,
-            validation_worker=(
-                self.validator_provider
-                if self.validator_provider_name
-                else None
-            ),
+            validation_worker=(self.validator_provider if self.validator_provider_name else None),
             worker_acp_command=self.worker_acp_command,
             validation_worker_acp_command=self.validator_acp_command,
         )
@@ -185,18 +211,17 @@ class HarnessConfig:
     # Role-specialized variants
     # ------------------------------------------------------------------
 
-    def for_role(
-        self, role: Literal["worker", "validator", "terminal_reviewer"]
-    ) -> HarnessConfig:
+    def for_role(self, role: Literal["worker", "validator", "terminal_reviewer"]) -> HarnessConfig:
         if role == "worker":
             return self
         if role == "validator":
             return replace(
                 self,
-                worker_provider_name=(
-                    self.validator_provider_name or self.worker_provider_name
-                ),
+                worker_provider_name=(self.validator_provider_name or self.worker_provider_name),
                 worker_acp_command=self.resolved_validator_acp_command,
+                worker_reasoning_effort=(
+                    self.validator_reasoning_effort or self.worker_reasoning_effort
+                ),
             )
         if role == "terminal_reviewer":
             return replace(
@@ -207,5 +232,10 @@ class HarnessConfig:
                     or self.worker_provider_name
                 ),
                 worker_acp_command=self.resolved_terminal_reviewer_acp_command,
+                worker_reasoning_effort=(
+                    self.terminal_reviewer_reasoning_effort
+                    or self.validator_reasoning_effort
+                    or self.worker_reasoning_effort
+                ),
             )
         raise ValueError(f"unknown role: {role}")
