@@ -9,7 +9,7 @@ import click
 import yaml
 
 from .assets import AssetLoader, iter_skill_directories
-from .config import HarnessConfig
+from .config import VALID_REASONING_EFFORTS, HarnessConfig
 from .envelope import render_task_list
 from .providers import (
     ProviderDefinition,
@@ -24,7 +24,7 @@ OMNIGENT_HARNESS_CHOICES = ("claude-sdk", "opencode")
 OMNIGENT_DEFAULT_HARNESS = "claude-sdk"
 OMNIGENT_BUNDLE_DIR = ".omnigent/zenith-orchestrator"
 
-MCP_ENV_FORWARD_ALLOWLIST = (
+RUNTIME_ENV_FORWARD_ALLOWLIST = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_BASE_URL",
@@ -39,6 +39,9 @@ MCP_ENV_FORWARD_ALLOWLIST = (
     "GLM_API_KEY",
     "GLM_BASE_URL",
     "MAX_THINKING_TOKENS",
+    "ZENITH_WORKER_REASONING_EFFORT",
+    "ZENITH_VALIDATOR_REASONING_EFFORT",
+    "ZENITH_TERMINAL_REVIEWER_REASONING_EFFORT",
     "ZAI_API_KEY",
     "ZAI_BASE_URL",
 )
@@ -88,6 +91,13 @@ def cli() -> None:
     default=None,
     help="Omnigent executor harness (only valid with --agent/--orchestrator-provider omnigent).",
 )
+@click.option("--worker-reasoning-effort", type=click.Choice(VALID_REASONING_EFFORTS), default=None)
+@click.option(
+    "--validator-reasoning-effort", type=click.Choice(VALID_REASONING_EFFORTS), default=None
+)
+@click.option(
+    "--terminal-reviewer-reasoning-effort", type=click.Choice(VALID_REASONING_EFFORTS), default=None
+)
 @click.option("--zenith-home", type=click.Path(), default=None)
 @click.option("--workspace-dir", "workspace_dir", type=click.Path(exists=True), default=".")
 def init(
@@ -100,6 +110,9 @@ def init(
     terminal_reviewer_provider: str | None,
     terminal_reviewer_acp_command: str | None,
     omnigent_harness: str | None,
+    worker_reasoning_effort: str | None,
+    validator_reasoning_effort: str | None,
+    terminal_reviewer_reasoning_effort: str | None,
     zenith_home: str | None,
     workspace_dir: str,
 ) -> None:
@@ -135,11 +148,26 @@ def init(
 
     # 1) MCP / Codex / Omnigent config
     storage_env = _storage_env(zenith_home=zenith_home, workspace=workspace, selection=selection)
+    # Flags are sugar for the ZENITH_*_REASONING_EFFORT env vars and win over
+    # valid inherited shell settings. An invalid value already in the
+    # environment still fails fast at discover() above — flags override
+    # settings, they don't mask broken ones (the same validation would raise
+    # at server launch anyway).
+    effort_env = {
+        var: value
+        for var, value in (
+            ("ZENITH_WORKER_REASONING_EFFORT", worker_reasoning_effort),
+            ("ZENITH_VALIDATOR_REASONING_EFFORT", validator_reasoning_effort),
+            ("ZENITH_TERMINAL_REVIEWER_REASONING_EFFORT", terminal_reviewer_reasoning_effort),
+        )
+        if value
+    }
     _write_bootstrap_config(
         workspace,
         selection,
         storage_env,
         config,
+        effort_env,
         omnigent_harness=effective_omnigent_harness,
     )
 
@@ -355,8 +383,8 @@ def _storage_env(
     return env
 
 
-def _forwarded_mcp_env() -> dict[str, str]:
-    return {key: value for key in MCP_ENV_FORWARD_ALLOWLIST if (value := os.environ.get(key))}
+def _forwarded_runtime_env() -> dict[str, str]:
+    return {key: value for key in RUNTIME_ENV_FORWARD_ALLOWLIST if (value := os.environ.get(key))}
 
 
 def _zenith_project_root() -> Path:
@@ -462,25 +490,27 @@ def _write_bootstrap_config(
     selection: ProviderSelection,
     storage_env: dict[str, str],
     config: HarnessConfig,
+    cli_env: dict[str, str],
     *,
     omnigent_harness: str | None = None,
 ) -> None:
     fmt = selection.orchestrator.config_format
-    env = {**selection.env(), **storage_env}
+    env = {**selection.env(), **storage_env, **_forwarded_runtime_env(), **cli_env}
     mcp_cmd = _deploy_and_resolve_mcp_cmd(workspace, config)
     if fmt == "mcp_json":
-        env = {**env, **_forwarded_mcp_env()}
         _write_mcp_json(workspace, env=env, mcp_cmd=mcp_cmd)
     elif fmt == "antigravity_config":
-        env = {**env, **_forwarded_mcp_env()}
         _write_agents_mcp_config(workspace, env=env, mcp_cmd=mcp_cmd)
     elif fmt == "opencode_config":
-        env = {**env, **_forwarded_mcp_env()}
         _write_opencode_json(workspace, env=env, mcp_cmd=mcp_cmd)
     elif fmt == "codex_config":
         config_path = workspace / ".codex" / "config.toml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        env_lines = "\n".join(f'{k} = "{v}"' for k, v in env.items())
+        # TOML basic strings share JSON's escape syntax, so json.dumps closes
+        # and escapes embedded quotes. ACP commands splice config via
+        # `-c key="value"`, and forwarded env values may hold quotes or
+        # backslashes; interpolating either raw emits invalid TOML.
+        env_lines = "\n".join(f"{k} = {json.dumps(v)}" for k, v in env.items())
         block = (
             'model = "gpt-5.5"\n'
             'sandbox_mode = "danger-full-access"\n'
@@ -503,7 +533,6 @@ def _write_bootstrap_config(
     elif fmt == "omnigent_yaml":
         # Only config.yaml is generator-managed; AGENTS.md is preserved on re-init.
         harness = omnigent_harness or OMNIGENT_DEFAULT_HARNESS
-        env = {**env, **_forwarded_mcp_env()}
         bundle_dir = workspace / OMNIGENT_BUNDLE_DIR
         bundle_dir.mkdir(parents=True, exist_ok=True)
         config_path = bundle_dir / "config.yaml"
