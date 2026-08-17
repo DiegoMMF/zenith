@@ -1,0 +1,21 @@
+schema_version: 1
+project_id: zenith
+catalog_revision: '2026-08-01'
+project_flags:
+  es_pwa: false
+  brownfield: false
+  datos_regulados: false
+  multi_locale: false
+  ui_cliente_facing: false
+tier: 2
+entries:
+- instruction_id: 01-gen-specs
+  instruction_version: 1.0.0
+  status: applied
+  applied_at: '2026-08-01T15:41:53Z'
+  commit: abc123
+  executed_by: agent:test
+  evidence: []
+  metrics_before: {}
+  metrics_after: {}
+  notes: ''

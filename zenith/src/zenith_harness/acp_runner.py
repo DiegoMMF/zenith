@@ -558,9 +558,7 @@ class ACPNodeRunner:
         progress_callback: ProgressCallback | None = None,
     ) -> NodeHandoff:
         """Spawn the worker MCP server + ACP agent; poll the attempt file; return the handoff."""
-        role: Literal["validator", "worker"] = (
-            "validator" if task.type == "validate" else "worker"
-        )
+        role: Literal["validator", "worker"] = "validator" if task.type == "validate" else "worker"
         role_config = self.config.for_role(role)
         acp_command = role_config.worker_acp_command or role_config.resolved_worker_acp_command
         if not acp_command:
@@ -569,7 +567,9 @@ class ACPNodeRunner:
             )
         acp_command = _augment_acp_command(acp_command, role_config.worker_provider)
 
-        workspace_dir = str(Path(cwd).expanduser().resolve() if cwd else store.workspace_dir(project_id))
+        workspace_dir = str(
+            Path(cwd).expanduser().resolve() if cwd else store.workspace_dir(project_id)
+        )
         project_bucket = str(store.zenith_dir(project_id))
         handoff_path = store.attempt_path(project_id, mission_id, spawn_ts, task.id)
         handoff_path.parent.mkdir(parents=True, exist_ok=True)
@@ -594,12 +594,24 @@ class ACPNodeRunner:
         try:
             await self._wait_for_server_ready("127.0.0.1", mcp_port)
         except TimeoutError:
+            rc = mcp_process.returncode
+            stderr_bytes = b""
+            if rc is not None:
+                try:
+                    stderr_bytes = await asyncio.wait_for(mcp_process.stderr.read(), timeout=1.0)
+                except Exception:
+                    pass
             if mcp_process.returncode is None:
                 mcp_process.terminate()
             await _close_subprocess(mcp_process, timeout=5)
-            return self._synthesize_missing_handoff(
-                task, summary="Worker MCP server failed to start"
-            )
+            if not stderr_bytes:
+                try:
+                    stderr_bytes = await asyncio.wait_for(mcp_process.stderr.read(), timeout=1.0)
+                except Exception:
+                    pass
+            stderr_str = stderr_bytes.decode("utf-8", errors="replace")
+            summary = f"Worker MCP server failed to start. exit_code={rc} stderr={stderr_str}"
+            return self._synthesize_missing_handoff(task, summary=summary)
 
         worker_mcp_cfg = {
             "type": "http",
@@ -619,14 +631,20 @@ class ACPNodeRunner:
             project_id=project_id,
         )
 
-        # 3) Spawn the ACP agent.
+        # 3) Spawn the ACP agent. Explicitly inject Zenith context into the env.
+        acp_env = _acp_subprocess_env(role_config.worker_provider)
+        acp_env["ZENITH_PROJECT_ID"] = project_id
+        acp_env["ZENITH_MISSION_ID"] = mission_id
+        acp_env["ZENITH_NODE_ID"] = task.id
+        acp_env["ZENITH_NODE_TYPE"] = task.type
+        acp_env["ZENITH_HANDOFF_PATH"] = str(handoff_path)
         process = await asyncio.create_subprocess_shell(
             acp_command,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workspace_dir,
-            env=_acp_subprocess_env(role_config.worker_provider),
+            env=acp_env,
             limit=SUBPROCESS_STREAM_LIMIT,
         )
         progress_tracker = ACPProgressTracker(callback=progress_callback)
@@ -730,8 +748,7 @@ class ACPNodeRunner:
         acp_command = role_config.worker_acp_command
         if not acp_command:
             raise RuntimeError(
-                "No ACP command for terminal reviewer. "
-                "Set ZENITH_TERMINAL_REVIEWER_ACP_COMMAND."
+                "No ACP command for terminal reviewer. Set ZENITH_TERMINAL_REVIEWER_ACP_COMMAND."
             )
         acp_command = _augment_acp_command(acp_command, role_config.worker_provider)
 
@@ -780,7 +797,12 @@ class ACPNodeRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workspace_dir,
-            env=_acp_subprocess_env(role_config.worker_provider),
+            env={
+                **_acp_subprocess_env(role_config.worker_provider),
+                "ZENITH_HANDOFF_PATH": str(report_path),
+                "ZENITH_NODE_TYPE": "terminal-review",
+                "ZENITH_NODE_ID": "terminal-reviewer",
+            },
             limit=SUBPROCESS_STREAM_LIMIT,
         )
         tracker = ACPProgressTracker(callback=progress_callback)
@@ -951,16 +973,12 @@ class ACPNodeRunner:
                 return False
             await asyncio.sleep(0.1)
 
-    async def _maybe_set_mode(
-        self, client: ACPClient, session_id: str, provider
-    ) -> None:
+    async def _maybe_set_mode(self, client: ACPClient, session_id: str, provider) -> None:
         mode = getattr(provider, "acp_runtime_mode", None)
         if not mode:
             return
         try:
-            await client.send_request(
-                "session/set_mode", {"sessionId": session_id, "modeId": mode}
-            )
+            await client.send_request("session/set_mode", {"sessionId": session_id, "modeId": mode})
         except ACPError as exc:
             raise ACPError(
                 f"Failed to set ACP runtime mode {mode!r} for {provider.name}: {exc}"
@@ -1070,9 +1088,7 @@ class ACPNodeRunner:
             return ValidateHandoff.model_validate(data)
         return WorkHandoff.model_validate(data)
 
-    def _synthesize_missing_handoff(
-        self, task: Task, *, summary: str = ""
-    ) -> NodeHandoff:
+    def _synthesize_missing_handoff(self, task: Task, *, summary: str = "") -> NodeHandoff:
         report = summary or "Agent session ended without calling end_node."
         if task.type == "validate":
             return ValidateHandoff(
@@ -1196,9 +1212,7 @@ class ACPTerminalReviewer:
         self.loader = AssetLoader(config)
         self.runner = ACPNodeRunner(config=config, loader=self.loader)
 
-    def review(
-        self, project_id: str, mission_id: str, spawn_ts: str
-    ) -> TerminalReviewHandoff:
+    def review(self, project_id: str, mission_id: str, spawn_ts: str) -> TerminalReviewHandoff:
         return _run_coro_blocking(
             self.runner.run_terminal_review(
                 project_id=project_id,

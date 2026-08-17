@@ -101,7 +101,7 @@ integración completa de modelos Gemini.
 Tienen que decirle a Zenith qué proyecto van a intervenir. Desde el repositorio fuente de Zenith, ejecuten este comando apuntando a la ruta de *su repositorio de trabajo*:
 
 ```bash
-uv run zenith init --workspace-dir /ruta/a/mi-proyecto --agent claude
+uv run zenith init --workspace-dir /home/diego/Datos/Software/research-orchestrators/zenith --agent claude
 ```
 
 Si prefieren usar Codex para ese proyecto, cambien el agente:

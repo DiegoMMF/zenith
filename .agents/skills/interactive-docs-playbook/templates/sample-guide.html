@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sample guide — Interactive Docs</title>
+  <link rel="stylesheet" href="../assets/doc-html/styles.css">
+  <!-- Ajustá la ruta relativa según la profundidad del archivo. -->
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="meta"><a href="../index.html">← Índice</a> · <span>Guía HTML</span></p>
+      <span class="meta">Ejemplo</span>
+      <h1>Sample guide</h1>
+      <p class="meta">Patrones de enriquecimiento</p>
+      <nav>
+        <a href="#overview">Overview</a>
+        <a href="#checklist">Checklist</a>
+        <a href="#flow">Flujo</a>
+      </nav>
+    </aside>
+    <main class="main">
+      <header class="hero" id="top">
+        <h2>Sample guide</h2>
+        <p>Plantilla de guía enriquecida (≥2 patrones interactivos/visuales)</p>
+      </header>
+
+      <!-- ENRICHMENT: insertar paneles tras el hero -->
+      <div class="banner danger">
+        <strong>Bloqueadores</strong>
+        Listá aquí lo que impide avanzar. Enlazá a otras guías relacionadas.
+      </div>
+      <div class="status-matrix">
+        <div class="status-card ok"><div class="label">CI</div><div class="value">OK</div></div>
+        <div class="status-card warn"><div class="label">Secrets</div><div class="value">Review</div></div>
+        <div class="status-card danger"><div class="label">DNS</div><div class="value">Blocked</div></div>
+      </div>
+      <div class="tabs">
+        <div class="tab-list">
+          <button class="tab-btn active" type="button">Local</button>
+          <button class="tab-btn" type="button">Staging</button>
+        </div>
+        <div class="tab-panel active">
+          <pre>pnpm test
+pnpm build</pre>
+        </div>
+        <div class="tab-panel">
+          <pre>curl -sS https://staging.example.com/health</pre>
+        </div>
+      </div>
+
+      <section class="section" id="overview">
+        <h2>Overview</h2>
+        <div class="phase-grid">
+          <div class="phase-card"><div class="num">1</div><h4>Preparar</h4><p class="status-pending">Pendiente</p></div>
+          <div class="phase-card"><div class="num">2</div><h4>Ejecutar</h4><p class="status-ok">Listo</p></div>
+          <div class="phase-card"><div class="num">3</div><h4>Verificar</h4><p class="status-pending">Pendiente</p></div>
+        </div>
+        <div class="decision-tree">
+          <strong>¿Afecta producción?</strong>
+          <ul>
+            <li><strong>Sí</strong> → checklist de go-live + revisión.</li>
+            <li><strong>No</strong> → seguir el timeline.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="section" id="checklist">
+        <h2>Checklist</h2>
+        <div class="progress-bar"><span style="width:0%"></span></div>
+        <p data-progress-label class="meta">Progreso: 0%</p>
+        <ul class="checklist" data-persist="sample-guide">
+          <li><label><input type="checkbox" id="sample-c0"><span>Paso A</span></label></li>
+          <li><label><input type="checkbox" id="sample-c1"><span>Paso B</span></label></li>
+          <li><label><input type="checkbox" id="sample-c2"><span>Paso C</span></label></li>
+        </ul>
+        <details>
+          <summary>Error común</summary>
+          <div class="details-body">Descripción + mitigación.</div>
+        </details>
+      </section>
+
+      <section class="section" id="flow">
+        <h2>Flujo</h2>
+        <ol class="timeline">
+          <li data-step="1"><strong>Clonar / pull</strong></li>
+          <li data-step="2"><strong>Correr checks</strong></li>
+          <li data-step="3"><strong>Abrir PR</strong></li>
+        </ol>
+        <div class="flow-diagram">
+          <pre class="mermaid">graph LR
+  A[Dev] --> B[CI]
+  B --> C[Staging]
+  C --> D[Prod]
+</pre>
+        </div>
+        <div class="url-grid">
+          <div class="url-card"><strong>Índice</strong><a href="../index.html">docs/index.html</a></div>
+        </div>
+      </section>
+
+      <footer class="footer-note">
+        Guía expandida (humanos y agentes). Tras enriquecer: <code>generate: false</code> en el generador.
+      </footer>
+    </main>
+  </div>
+  <script src="../assets/doc-html/app.js"></script>
+</body>
+</html>
