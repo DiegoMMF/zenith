@@ -199,6 +199,24 @@ async def _drain_stream_chunks(stream: asyncio.StreamReader | None) -> str:
     return "".join(chunks)
 
 
+async def _read_stderr_bytes(process: asyncio.subprocess.Process, *, timeout: float = 1.0) -> bytes:
+    """Best-effort read of a subprocess stderr, handling ``None`` for mypy.
+
+    ``Process.stderr`` is ``StreamReader | None`` (None when not piped).
+    Callers that launch with ``stderr=PIPE`` know it is not None at runtime,
+    but mypy cannot narrow that. This helper centralises the ``None`` guard
+    and the ``wait_for`` timeout handling so call sites stay mypy-clean.
+    """
+    stream = process.stderr
+    if stream is None:
+        return b""
+    try:
+        data = await asyncio.wait_for(stream.read(), timeout=timeout)
+        return data if isinstance(data, (bytes, bytearray)) else b""
+    except Exception:  # noqa: BLE001
+        return b""
+
+
 @dataclass
 class ManagedTerminal:
     terminal_id: str
@@ -607,18 +625,12 @@ class ACPNodeRunner:
             rc = mcp_process.returncode
             stderr_bytes = b""
             if rc is not None:
-                try:
-                    stderr_bytes = await asyncio.wait_for(mcp_process.stderr.read(), timeout=1.0)
-                except Exception:
-                    pass
+                stderr_bytes = await _read_stderr_bytes(mcp_process, timeout=1.0)
             if mcp_process.returncode is None:
                 mcp_process.terminate()
             await _close_subprocess(mcp_process, timeout=5)
             if not stderr_bytes:
-                try:
-                    stderr_bytes = await asyncio.wait_for(mcp_process.stderr.read(), timeout=1.0)
-                except Exception:
-                    pass
+                stderr_bytes = await _read_stderr_bytes(mcp_process, timeout=1.0)
             stderr_str = stderr_bytes.decode("utf-8", errors="replace")
             summary = f"Worker MCP server failed to start. exit_code={rc} stderr={stderr_str}"
             return self._synthesize_missing_handoff(task, summary=summary)
