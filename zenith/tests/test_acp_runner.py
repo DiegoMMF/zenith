@@ -13,13 +13,17 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from dataclasses import replace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from zenith_harness.acp_runner import (
     ACPNodeRunner,
+    ACPError,
     _acp_subprocess_env,
     _augment_acp_command,
+    _parse_codex_c_overrides,
 )
 from zenith_harness.providers import PROVIDERS
 from zenith_harness.assets import AssetLoader
@@ -188,6 +192,179 @@ def test_codex_acp_env_preserves_node_path_when_bwrap_is_present(
     assert str(bin_dir) in env["PATH"].split(os.pathsep)
     assert env["CODEX_SANDBOX"] == "danger-full-access"
     assert env["CODEX_DISABLE_SANDBOX"] == "1"
+
+
+def test_codex_acp_env_includes_codex_config_json_with_effort():
+    env = _acp_subprocess_env(PROVIDERS["codex"], reasoning_effort="max")
+    config = json.loads(env["CODEX_CONFIG"])
+    assert config["sandbox_mode"] == "danger-full-access"
+    assert config["approval_policy"] == "never"
+    assert config["model_reasoning_effort"] == "max"
+
+
+def test_codex_acp_env_codex_config_defaults_to_xhigh():
+    env = _acp_subprocess_env(PROVIDERS["codex"])
+    config = json.loads(env["CODEX_CONFIG"])
+    assert config["model_reasoning_effort"] == "xhigh"
+
+
+def test_codex_acp_env_merges_user_codex_config(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("CODEX_CONFIG", json.dumps({"model": "gpt-5.6-luna"}))
+    env = _acp_subprocess_env(PROVIDERS["codex"], reasoning_effort="ultra")
+    config = json.loads(env["CODEX_CONFIG"])
+    assert config["model"] == "gpt-5.6-luna"
+    assert config["sandbox_mode"] == "danger-full-access"
+    assert config["approval_policy"] == "never"
+    assert config["model_reasoning_effort"] == "ultra"
+
+
+def test_codex_acp_env_overrides_user_safety_values(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv(
+        "CODEX_CONFIG",
+        json.dumps({"sandbox_mode": "read-only", "approval_policy": "on-failure"}),
+    )
+    env = _acp_subprocess_env(PROVIDERS["codex"])
+    config = json.loads(env["CODEX_CONFIG"])
+    assert config["sandbox_mode"] == "danger-full-access"
+    assert config["approval_policy"] == "never"
+
+
+@pytest.mark.parametrize("raw", ["not valid json", "", "[]", "null", '"text"', "42"])
+def test_invalid_codex_config_fails_explicitly(monkeypatch, raw):
+    monkeypatch.setenv("CODEX_CONFIG", raw)
+    with pytest.raises(ACPError, match="CODEX_CONFIG"):
+        _acp_subprocess_env(PROVIDERS["codex"], reasoning_effort="high")
+
+
+@pytest.mark.parametrize("assignment", [
+    'model="chosen-model"',
+    "model=chosen-model",
+    "'model=\"chosen-model\"'",
+    'model="old-model" -c model=chosen-model',
+])
+def test_command_model_overrides_ambient_for_shell_quoting(monkeypatch, assignment):
+    monkeypatch.setenv("CODEX_CONFIG", '{"model":"ambient-model"}')
+    command = _augment_acp_command("codex-acp -c " + assignment, PROVIDERS["codex"], "high")
+    config = json.loads(_acp_subprocess_env(PROVIDERS["codex"], "high", command)["CODEX_CONFIG"])
+    assert config["model"] == "chosen-model"
+    assert config["model_reasoning_effort"] == "high"
+
+
+@pytest.mark.parametrize("command", [
+    "codex-acp --config model=chosen-model",
+    "codex-acp --config=model=chosen-model",
+])
+def test_long_config_option(command):
+    assert _parse_codex_c_overrides(command) == {"model": "chosen-model"}
+
+
+@pytest.mark.parametrize("command", ["codex-acp -c", "codex-acp -c model", 'codex-acp -c model="'])
+def test_malformed_override_is_reported(command):
+    with pytest.raises(ACPError):
+        _parse_codex_c_overrides(command)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["worker", "validator", "terminal_reviewer"])
+async def test_invalid_config_rejected_before_mcp_start(monkeypatch, config, role):
+    monkeypatch.setenv("CODEX_CONFIG", "invalid-json")
+    config = replace(config, worker_provider_name="codex", worker_acp_command="codex-acp")
+    runner = ACPNodeRunner(config, AssetLoader(config))
+    worker_start = AsyncMock()
+    review_start = AsyncMock()
+    monkeypatch.setattr(runner, "_start_worker_mcp_server", worker_start)
+    monkeypatch.setattr(runner, "_start_terminal_reviewer_mcp", review_start)
+    store = ProjectStore(config)
+    with pytest.raises(ACPError, match="CODEX_CONFIG"):
+        if role == "terminal_reviewer":
+            await runner.run_terminal_review("p1", "mission-001", "attempt", store)
+        else:
+            task = Task(id="w1", type="validate" if role == "validator" else "work",
+                        body="check", targets=[])
+            await runner.run_node("p1", "mission-001", task, "attempt", store)
+    worker_start.assert_not_called()
+    review_start.assert_not_called()
+
+
+@pytest.mark.parametrize("raw", ['{"value": NaN}', '{"value": Infinity}'])
+def test_nonfinite_config_rejected(monkeypatch, raw):
+    monkeypatch.setenv("CODEX_CONFIG", raw)
+    with pytest.raises(ACPError, match="JSON-compatible"):
+        _acp_subprocess_env(PROVIDERS["codex"])
+
+
+def test_override_values_preserve_types_and_embedded_quotes():
+    command = "codex-acp -c 'enabled=true' -c 'limit=3' -c 'label=\"a=b\"'"
+    assert _parse_codex_c_overrides(command) == {"enabled": True, "limit": 3, "label": "a=b"}
+
+
+def test_claude_acp_env_has_no_codex_config(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.delenv("CODEX_CONFIG", raising=False)
+    env = _acp_subprocess_env(PROVIDERS["claude"])
+    assert "CODEX_CONFIG" not in env
+
+
+def test_parse_codex_c_overrides_extracts_model():
+    cmd = 'codex-acp -c model="gpt-5.6-luna" -c sandbox_mode="danger-full-access"'
+    overrides = _parse_codex_c_overrides(cmd)
+    assert overrides["model"] == "gpt-5.6-luna"
+    assert overrides["sandbox_mode"] == "danger-full-access"
+
+
+def test_parse_codex_c_overrides_handles_single_quotes():
+    cmd = "codex-acp -c model='gpt-5.6-luna'"
+    overrides = _parse_codex_c_overrides(cmd)
+    assert overrides["model"] == "gpt-5.6-luna"
+
+
+def test_parse_codex_c_overrides_empty_when_no_flags():
+    assert _parse_codex_c_overrides("codex-acp") == {}
+
+
+def test_codex_acp_env_preserves_custom_model_from_command():
+    """The user's custom model from ZENITH_*_ACP_COMMAND's -c model=...
+    must reach CODEX_CONFIG — the npm adapter drops all argv -c flags."""
+    cmd = 'codex-acp -c model="gpt-5.6-luna" -c sandbox_mode="danger-full-access" -c approval_policy="never" -c model_reasoning_effort="max"'
+    env = _acp_subprocess_env(
+        PROVIDERS["codex"], reasoning_effort="max", acp_command=cmd
+    )
+    config = json.loads(env["CODEX_CONFIG"])
+    assert config["model"] == "gpt-5.6-luna"
+    assert config["sandbox_mode"] == "danger-full-access"
+    assert config["approval_policy"] == "never"
+    assert config["model_reasoning_effort"] == "max"
+
+
+def test_codex_acp_env_model_from_command_overrides_user_codex_config(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The -c model in the command string (explicit per-role) wins over
+    an ambient CODEX_CONFIG model."""
+    monkeypatch.setenv("CODEX_CONFIG", json.dumps({"model": "gpt-4o"}))
+    cmd = 'codex-acp -c model="gpt-5.6-luna"'
+    env = _acp_subprocess_env(
+        PROVIDERS["codex"], reasoning_effort="max", acp_command=cmd
+    )
+    config = json.loads(env["CODEX_CONFIG"])
+    assert config["model"] == "gpt-5.6-luna"
+
+
+def test_codex_acp_env_without_command_keeps_user_codex_config_model(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """When no acp_command is passed, a user-supplied CODEX_CONFIG model
+    is preserved (backward-compatible call signature)."""
+    monkeypatch.setenv("CODEX_CONFIG", json.dumps({"model": "gpt-4o"}))
+    env = _acp_subprocess_env(PROVIDERS["codex"], reasoning_effort="high")
+    config = json.loads(env["CODEX_CONFIG"])
+    assert config["model"] == "gpt-4o"
+    assert config["model_reasoning_effort"] == "high"
 
 
 def test_attempt_path_naming(config: HarnessConfig, project_setup):
