@@ -5,10 +5,11 @@ import inspect
 import json
 import logging
 import os
-import re
+import shlex
 import socket
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, ClassVar, Coroutine, Literal
@@ -119,17 +120,35 @@ def _augment_acp_command(
     return command
 
 
-_CODEX_C_OVERRIDE_RE = re.compile(r'-c\s+(\w+)=["\']([^"\']*)["\']')
+def _parse_codex_c_overrides(command: str) -> dict[str, Any]:
+    """Read -c/--config assignments after shell quoting; the last value wins.
 
-
-def _parse_codex_c_overrides(command: str) -> dict[str, str]:
-    """Extract -c key="value" overrides from a codex-acp command string.
-
-    Both _augment_acp_command and user-supplied ZENITH_*_ACP_COMMAND values
-    splice config via `-c key="value"`. The npm codex-acp adapter ignores
-    argv `-c` flags (issue #27), so we re-route them into CODEX_CONFIG.
+    Values use TOML syntax where possible, with bare strings preserved as in
+    the Codex CLI. Parsing does not execute the command or expand shell values.
     """
-    return dict(_CODEX_C_OVERRIDE_RE.findall(command))
+    try:
+        arguments = iter(shlex.split(command))
+    except ValueError as exc:
+        raise ACPError("Invalid quoting in Codex ACP command") from exc
+    overrides: dict[str, Any] = {}
+    for argument in arguments:
+        if argument in ("-c", "--config"):
+            assignment = next(arguments, None)
+            if assignment is None:
+                raise ACPError("Codex config override requires key=value")
+        elif argument.startswith("--config="):
+            assignment = argument[len("--config="):]
+        else:
+            continue
+        key, separator, value = assignment.partition("=")
+        if not separator or not key.strip():
+            raise ACPError("Codex config override requires key=value")
+        try:
+            parsed_value = tomllib.loads("value = " + value)["value"]
+        except tomllib.TOMLDecodeError:
+            parsed_value = value
+        overrides[key.strip()] = parsed_value
+    return overrides
 
 
 def _acp_subprocess_env(
@@ -176,13 +195,14 @@ def _acp_subprocess_env(
         codex_config: dict[str, Any] = {}
         # Layer 1: user-supplied CODEX_CONFIG.
         existing = env.get("CODEX_CONFIG")
-        if existing:
+        if existing is not None:
             try:
                 parsed = json.loads(existing)
-                if isinstance(parsed, dict):
-                    codex_config = parsed
-            except (json.JSONDecodeError, TypeError):
-                pass
+            except json.JSONDecodeError as exc:
+                raise ACPError("CODEX_CONFIG must contain valid JSON") from exc
+            if not isinstance(parsed, dict):
+                raise ACPError("CODEX_CONFIG must be a JSON object")
+            codex_config = parsed
         # Layer 2: -c overrides from the augmented command string
         # (carries the user's custom model + zenith's -c flags).
         if acp_command:
@@ -191,7 +211,10 @@ def _acp_subprocess_env(
         codex_config["sandbox_mode"] = "danger-full-access"
         codex_config["approval_policy"] = "never"
         codex_config["model_reasoning_effort"] = effort
-        env["CODEX_CONFIG"] = json.dumps(codex_config)
+        try:
+            env["CODEX_CONFIG"] = json.dumps(codex_config, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ACPError("Codex configuration must contain JSON-compatible values") from exc
     # hermes: no special env needed
     return env
 
@@ -638,6 +661,11 @@ class ACPNodeRunner:
             role_config.worker_provider,
             role_config.worker_reasoning_effort,
         )
+        acp_env = _acp_subprocess_env(
+            role_config.worker_provider,
+            role_config.worker_reasoning_effort,
+            acp_command,
+        )
 
         workspace_dir = str(Path(cwd).expanduser().resolve() if cwd else store.workspace_dir(project_id))
         project_bucket = str(store.zenith_dir(project_id))
@@ -696,11 +724,7 @@ class ACPNodeRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workspace_dir,
-            env=_acp_subprocess_env(
-                role_config.worker_provider,
-                role_config.worker_reasoning_effort,
-                acp_command,
-            ),
+            env=acp_env,
             limit=SUBPROCESS_STREAM_LIMIT,
         )
         progress_tracker = ACPProgressTracker(callback=progress_callback)
@@ -812,6 +836,11 @@ class ACPNodeRunner:
             role_config.worker_provider,
             role_config.worker_reasoning_effort,
         )
+        acp_env = _acp_subprocess_env(
+            role_config.worker_provider,
+            role_config.worker_reasoning_effort,
+            acp_command,
+        )
 
         workspace_dir = str(store.workspace_dir(project_id))
         project_bucket = str(store.zenith_dir(project_id))
@@ -858,11 +887,7 @@ class ACPNodeRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workspace_dir,
-            env=_acp_subprocess_env(
-                role_config.worker_provider,
-                role_config.worker_reasoning_effort,
-                acp_command,
-            ),
+            env=acp_env,
             limit=SUBPROCESS_STREAM_LIMIT,
         )
         tracker = ACPProgressTracker(callback=progress_callback)

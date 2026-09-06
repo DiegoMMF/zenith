@@ -13,11 +13,14 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from dataclasses import replace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from zenith_harness.acp_runner import (
     ACPNodeRunner,
+    ACPError,
     _acp_subprocess_env,
     _augment_acp_command,
     _parse_codex_c_overrides,
@@ -230,15 +233,73 @@ def test_codex_acp_env_overrides_user_safety_values(
     assert config["approval_policy"] == "never"
 
 
-def test_codex_acp_env_invalid_user_codex_config_replaced(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setenv("CODEX_CONFIG", "not valid json")
-    env = _acp_subprocess_env(PROVIDERS["codex"], reasoning_effort="high")
-    config = json.loads(env["CODEX_CONFIG"])
-    assert config["sandbox_mode"] == "danger-full-access"
-    assert config["approval_policy"] == "never"
+@pytest.mark.parametrize("raw", ["not valid json", "", "[]", "null", '"text"', "42"])
+def test_invalid_codex_config_fails_explicitly(monkeypatch, raw):
+    monkeypatch.setenv("CODEX_CONFIG", raw)
+    with pytest.raises(ACPError, match="CODEX_CONFIG"):
+        _acp_subprocess_env(PROVIDERS["codex"], reasoning_effort="high")
+
+
+@pytest.mark.parametrize("assignment", [
+    'model="chosen-model"',
+    "model=chosen-model",
+    "'model=\"chosen-model\"'",
+    'model="old-model" -c model=chosen-model',
+])
+def test_command_model_overrides_ambient_for_shell_quoting(monkeypatch, assignment):
+    monkeypatch.setenv("CODEX_CONFIG", '{"model":"ambient-model"}')
+    command = _augment_acp_command("codex-acp -c " + assignment, PROVIDERS["codex"], "high")
+    config = json.loads(_acp_subprocess_env(PROVIDERS["codex"], "high", command)["CODEX_CONFIG"])
+    assert config["model"] == "chosen-model"
     assert config["model_reasoning_effort"] == "high"
+
+
+@pytest.mark.parametrize("command", [
+    "codex-acp --config model=chosen-model",
+    "codex-acp --config=model=chosen-model",
+])
+def test_long_config_option(command):
+    assert _parse_codex_c_overrides(command) == {"model": "chosen-model"}
+
+
+@pytest.mark.parametrize("command", ["codex-acp -c", "codex-acp -c model", 'codex-acp -c model="'])
+def test_malformed_override_is_reported(command):
+    with pytest.raises(ACPError):
+        _parse_codex_c_overrides(command)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["worker", "validator", "terminal_reviewer"])
+async def test_invalid_config_rejected_before_mcp_start(monkeypatch, config, role):
+    monkeypatch.setenv("CODEX_CONFIG", "invalid-json")
+    config = replace(config, worker_provider_name="codex", worker_acp_command="codex-acp")
+    runner = ACPNodeRunner(config, AssetLoader(config))
+    worker_start = AsyncMock()
+    review_start = AsyncMock()
+    monkeypatch.setattr(runner, "_start_worker_mcp_server", worker_start)
+    monkeypatch.setattr(runner, "_start_terminal_reviewer_mcp", review_start)
+    store = ProjectStore(config)
+    with pytest.raises(ACPError, match="CODEX_CONFIG"):
+        if role == "terminal_reviewer":
+            await runner.run_terminal_review("p1", "mission-001", "attempt", store)
+        else:
+            task = Task(id="w1", type="validate" if role == "validator" else "work",
+                        body="check", targets=[])
+            await runner.run_node("p1", "mission-001", task, "attempt", store)
+    worker_start.assert_not_called()
+    review_start.assert_not_called()
+
+
+@pytest.mark.parametrize("raw", ['{"value": NaN}', '{"value": Infinity}'])
+def test_nonfinite_config_rejected(monkeypatch, raw):
+    monkeypatch.setenv("CODEX_CONFIG", raw)
+    with pytest.raises(ACPError, match="JSON-compatible"):
+        _acp_subprocess_env(PROVIDERS["codex"])
+
+
+def test_override_values_preserve_types_and_embedded_quotes():
+    command = "codex-acp -c 'enabled=true' -c 'limit=3' -c 'label=\"a=b\"'"
+    assert _parse_codex_c_overrides(command) == {"enabled": True, "limit": 3, "label": "a=b"}
 
 
 def test_claude_acp_env_has_no_codex_config(
