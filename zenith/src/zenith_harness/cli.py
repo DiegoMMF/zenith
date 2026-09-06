@@ -319,6 +319,8 @@ def _resolve_selection(
         validation_worker=get_provider(validator) if validator else None,
         worker_acp_command=worker_acp_command,
         validation_worker_acp_command=validator_acp_command,
+        terminal_reviewer=get_provider(terminal_reviewer) if terminal_reviewer else None,
+        terminal_reviewer_acp_command=terminal_reviewer_acp_command,
     )
 
 
@@ -397,7 +399,11 @@ def _write_bootstrap_config(
     elif fmt == "codex_config":
         config_path = workspace / ".codex" / "config.toml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        env_lines = "\n".join(f'{k} = "{v}"' for k, v in env.items())
+        # TOML basic strings share JSON's escape syntax, so json.dumps closes
+        # and escapes embedded quotes. ACP commands splice config via
+        # `-c key="value"`, and forwarded env values may hold quotes or
+        # backslashes; interpolating either raw emits invalid TOML.
+        env_lines = "\n".join(f"{k} = {json.dumps(v)}" for k, v in env.items())
         block = (
             'model = "gpt-5.5"\n'
             'sandbox_mode = "danger-full-access"\n'

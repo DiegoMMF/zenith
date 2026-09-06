@@ -141,6 +141,45 @@ class TestInit:
         assert server_env["ZENITH_VALIDATOR_REASONING_EFFORT"] == "medium"
         assert server_env["ZENITH_TERMINAL_REVIEWER_REASONING_EFFORT"] == "low"
 
+    def test_codex_init_escapes_quoted_acp_commands(
+        self, runner: CliRunner, workspace: Path, env: dict[str, str]
+    ) -> None:
+        """Quoted ACP commands must survive into config.toml as valid TOML.
+
+        `-c key="value"` is the supported splice shape for codex config, so
+        a role's command can carry double quotes. Interpolating them raw
+        terminates the TOML string early and corrupts the managed block.
+        The two commands differ so `ProviderSelection.env()` emits both —
+        it suppresses a role whose resolved command matches the previous
+        role's.
+        """
+        worker_cmd = 'codex-acp -c model="gpt-5.6-luna"'
+        validator_cmd = 'codex-acp -c model="gpt-5.6-terra"'
+
+        r = runner.invoke(
+            cli,
+            [
+                "init",
+                "--workspace-dir",
+                str(workspace),
+                "--agent",
+                "codex",
+                "--worker-acp-command",
+                worker_cmd,
+                "--validator-acp-command",
+                validator_cmd,
+            ],
+        )
+        assert r.exit_code == 0, r.output
+
+        # Parsing at all is the regression guard — this raises before the fix.
+        config = tomllib.loads(
+            (workspace / ".codex" / "config.toml").read_text(encoding="utf-8")
+        )
+        server_env = config["mcp_servers"]["zenith"]["env"]
+        assert server_env["ZENITH_WORKER_ACP_COMMAND"] == worker_cmd
+        assert server_env["ZENITH_VALIDATOR_ACP_COMMAND"] == validator_cmd
+
     def test_init_reasoning_effort_flags_override_env(
         self,
         runner: CliRunner,
@@ -248,6 +287,69 @@ class TestInit:
         assert mcp_env["ANTHROPIC_MODEL"] == "glm-5.2[1m]"
         assert mcp_env["ZAI_API_KEY"] == "zai-test-key"
         assert "DATABASE_URL" not in mcp_env
+
+    def test_claude_init_writes_terminal_reviewer_env_names(
+        self, runner: CliRunner, workspace: Path, env: dict[str, str]
+    ) -> None:
+        r = runner.invoke(
+            cli,
+            [
+                "init",
+                "--workspace-dir",
+                str(workspace),
+                "--agent",
+                "claude",
+                "--terminal-reviewer-provider",
+                "codex",
+                "--terminal-reviewer-acp-command",
+                "custom-tr-acp",
+            ],
+        )
+        assert r.exit_code == 0, r.output
+
+        mcp = json.loads((workspace / ".mcp.json").read_text())
+        mcp_env = mcp["mcpServers"]["zenith"]["env"]
+        assert mcp_env["ZENITH_TERMINAL_REVIEWER_PROVIDER"] == "codex"
+        assert mcp_env["ZENITH_TERMINAL_REVIEWER_ACP_COMMAND"] == "custom-tr-acp"
+
+    def test_claude_init_omits_terminal_reviewer_env_when_unset(
+        self, runner: CliRunner, workspace: Path, env: dict[str, str]
+    ) -> None:
+        r = runner.invoke(
+            cli, ["init", "--workspace-dir", str(workspace), "--agent", "claude"]
+        )
+        assert r.exit_code == 0, r.output
+
+        mcp = json.loads((workspace / ".mcp.json").read_text())
+        mcp_env = mcp["mcpServers"]["zenith"]["env"]
+        assert "ZENITH_TERMINAL_REVIEWER_PROVIDER" not in mcp_env
+        assert "ZENITH_TERMINAL_REVIEWER_ACP_COMMAND" not in mcp_env
+
+    def test_three_distinct_providers_all_env_written(
+        self, runner: CliRunner, workspace: Path, env: dict[str, str]
+    ) -> None:
+        r = runner.invoke(
+            cli,
+            [
+                "init",
+                "--workspace-dir",
+                str(workspace),
+                "--agent",
+                "claude",
+                "--validator-provider",
+                "codex",
+                "--terminal-reviewer-provider",
+                "hermes",
+            ],
+        )
+        assert r.exit_code == 0, r.output
+
+        mcp = json.loads((workspace / ".mcp.json").read_text())
+        mcp_env = mcp["mcpServers"]["zenith"]["env"]
+        assert mcp_env["ZENITH_ORCHESTRATOR_PROVIDER"] == "claude"
+        assert mcp_env["ZENITH_WORKER_PROVIDER"] == "claude"
+        assert mcp_env["ZENITH_VALIDATOR_PROVIDER"] == "codex"
+        assert mcp_env["ZENITH_TERMINAL_REVIEWER_PROVIDER"] == "hermes"
 
 
 class TestListProjects:
