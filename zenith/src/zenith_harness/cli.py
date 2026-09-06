@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 
 import click
+import yaml
 
 from .assets import AssetLoader, iter_skill_directories
 from .config import VALID_REASONING_EFFORTS, HarnessConfig
@@ -18,6 +19,10 @@ from .providers import (
     provider_names_for_role,
 )
 from .storage import ProjectStore
+
+OMNIGENT_HARNESS_CHOICES = ("claude-sdk", "opencode")
+OMNIGENT_DEFAULT_HARNESS = "claude-sdk"
+OMNIGENT_BUNDLE_DIR = ".omnigent/zenith-orchestrator"
 
 RUNTIME_ENV_FORWARD_ALLOWLIST = (
     "ANTHROPIC_API_KEY",
@@ -80,6 +85,12 @@ def cli() -> None:
     default=None,
 )
 @click.option("--terminal-reviewer-acp-command", default=None)
+@click.option(
+    "--omnigent-harness",
+    type=click.Choice(OMNIGENT_HARNESS_CHOICES),
+    default=None,
+    help="Omnigent executor harness (only valid with --agent/--orchestrator-provider omnigent).",
+)
 @click.option("--worker-reasoning-effort", type=click.Choice(VALID_REASONING_EFFORTS), default=None)
 @click.option(
     "--validator-reasoning-effort", type=click.Choice(VALID_REASONING_EFFORTS), default=None
@@ -98,6 +109,7 @@ def init(
     validator_acp_command: str | None,
     terminal_reviewer_provider: str | None,
     terminal_reviewer_acp_command: str | None,
+    omnigent_harness: str | None,
     worker_reasoning_effort: str | None,
     validator_reasoning_effort: str | None,
     terminal_reviewer_reasoning_effort: str | None,
@@ -125,8 +137,16 @@ def init(
         terminal_reviewer=terminal_reviewer_provider,
         terminal_reviewer_acp_command=terminal_reviewer_acp_command,
     )
+    if omnigent_harness is not None and selection.orchestrator.name != "omnigent":
+        raise click.UsageError(
+            "--omnigent-harness is only valid when the orchestrator provider is omnigent"
+        )
+    if selection.orchestrator.name == "omnigent":
+        effective_omnigent_harness: str | None = omnigent_harness or OMNIGENT_DEFAULT_HARNESS
+    else:
+        effective_omnigent_harness = None
 
-    # 1) MCP / Codex config
+    # 1) MCP / Codex / Omnigent config
     storage_env = _storage_env(zenith_home=zenith_home, workspace=workspace, selection=selection)
     # Flags are sugar for the ZENITH_*_REASONING_EFFORT env vars and win over
     # valid inherited shell settings. An invalid value already in the
@@ -142,7 +162,14 @@ def init(
         )
         if value
     }
-    _write_bootstrap_config(workspace, selection, storage_env, config, effort_env)
+    _write_bootstrap_config(
+        workspace,
+        selection,
+        storage_env,
+        config,
+        effort_env,
+        omnigent_harness=effective_omnigent_harness,
+    )
 
     # 2) Per-provider agents + orchestrator prompt
     for provider in selection.providers():
@@ -294,9 +321,17 @@ def _copy_skills(loader: AssetLoader, target: Path) -> None:
 
 
 def _echo_next_steps(orchestrator: ProviderDefinition) -> None:
-    prompt_path = orchestrator.orchestrator_prompt_output_path
     click.echo("")
     click.echo("Next:")
+    if orchestrator.name == "omnigent":
+        click.echo("  1. Start Omnigent from the initialized project workspace:")
+        click.echo(f"     omnigent run {OMNIGENT_BUNDLE_DIR}")
+        click.echo("  2. Give it the mission. Use Zenith MCP tools to plan and advance;")
+        click.echo("     do not implement the work directly in the Omnigent chat.")
+        click.echo("")
+        click.echo("     <your instruction or query>")
+        return
+    prompt_path = orchestrator.orchestrator_prompt_output_path
     click.echo("  1. Start your agent from the initialized project workspace:")
     click.echo(f"     {orchestrator.name}")
     if prompt_path:
@@ -333,6 +368,8 @@ def _resolve_selection(
         validation_worker=get_provider(validator) if validator else None,
         worker_acp_command=worker_acp_command,
         validation_worker_acp_command=validator_acp_command,
+        terminal_reviewer=get_provider(terminal_reviewer) if terminal_reviewer else None,
+        terminal_reviewer_acp_command=terminal_reviewer_acp_command,
     )
 
 
@@ -456,6 +493,8 @@ def _write_bootstrap_config(
     storage_env: dict[str, str],
     config: HarnessConfig,
     cli_env: dict[str, str],
+    *,
+    omnigent_harness: str | None = None,
 ) -> None:
     fmt = selection.orchestrator.config_format
     env = {**selection.env(), **storage_env, **_forwarded_runtime_env(), **cli_env}
@@ -492,6 +531,44 @@ def _write_bootstrap_config(
             "# END zenith\n"
         )
         _replace_managed_block(config_path, "# BEGIN zenith", "# END zenith", block)
+        click.echo(f"Wrote {config_path}")
+    elif fmt == "omnigent_yaml":
+        # Only config.yaml is generator-managed; AGENTS.md is preserved on re-init.
+        harness = omnigent_harness or OMNIGENT_DEFAULT_HARNESS
+        bundle_dir = workspace / OMNIGENT_BUNDLE_DIR
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        config_path = bundle_dir / "config.yaml"
+        payload = {
+            "spec_version": 1,
+            "name": "zenith-orchestrator",
+            "description": "Zenith mission orchestrator hosted by Omnigent",
+            "executor": {
+                "type": "omnigent",
+                "config": {
+                    "harness": harness,
+                },
+            },
+            "instructions": "AGENTS.md",
+            "tools": {
+                "zenith": {
+                    "type": "mcp",
+                    "command": mcp_cmd[0],
+                    "args": mcp_cmd[1:],
+                    "env": env,
+                },
+            },
+            "os_env": {
+                "type": "caller_process",
+                "cwd": ".",
+                "sandbox": {
+                    "type": "none",
+                },
+            },
+        }
+        config_path.write_text(
+            yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
         click.echo(f"Wrote {config_path}")
     else:
         raise ValueError(f"unsupported config_format: {fmt}")

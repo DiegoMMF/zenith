@@ -5,9 +5,11 @@ import inspect
 import json
 import logging
 import os
+import shlex
 import socket
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, ClassVar, Coroutine, Literal
@@ -116,13 +118,64 @@ def _augment_acp_command(command: str, provider, reasoning_effort: str | None = 
     return command
 
 
-def _acp_subprocess_env(provider) -> dict[str, str]:
+def _parse_codex_c_overrides(command: str) -> dict[str, Any]:
+    """Read -c/--config assignments after shell quoting; the last value wins.
+
+    Values use TOML syntax where possible, with bare strings preserved as in
+    the Codex CLI. Parsing does not execute the command or expand shell values.
+    """
+    try:
+        arguments = iter(shlex.split(command))
+    except ValueError as exc:
+        raise ACPError("Invalid quoting in Codex ACP command") from exc
+    overrides: dict[str, Any] = {}
+    for argument in arguments:
+        if argument in ("-c", "--config"):
+            assignment = next(arguments, None)
+            if assignment is None:
+                raise ACPError("Codex config override requires key=value")
+        elif argument.startswith("--config="):
+            assignment = argument[len("--config="):]
+        else:
+            continue
+        key, separator, value = assignment.partition("=")
+        if not separator or not key.strip():
+            raise ACPError("Codex config override requires key=value")
+        try:
+            parsed_value = tomllib.loads("value = " + value)["value"]
+        except tomllib.TOMLDecodeError:
+            parsed_value = value
+        overrides[key.strip()] = parsed_value
+    return overrides
+
+
+def _acp_subprocess_env(
+    provider,
+    reasoning_effort: str | None = None,
+    acp_command: str | None = None,
+) -> dict[str, str]:
     """Build the env handed to an ACP-agent subprocess.
 
     For codex we preserve PATH so node-based ACP adapters can launch via
-    `/usr/bin/env node`, and pass sandbox-disable hints through env. The
-    command line also receives `sandbox_mode="danger-full-access"` in
-    `_augment_acp_command`.
+    `/usr/bin/env node`, and pass sandbox-disable hints through env.
+
+    The npm `@agentclientprotocol/codex-acp` adapter (v1.1.0) does not
+    parse `-c` overrides from argv — it reads configuration from the
+    `CODEX_CONFIG` env var (JSON). We build it here in three layers,
+    each overriding the previous:
+
+    1. User-supplied `CODEX_CONFIG` (ambient env, e.g. `{"model": "..."}`).
+    2. `-c` overrides parsed from the augmented command string — these
+       include the user's custom model from `ZENITH_*_ACP_COMMAND` and
+       the sandbox/approval/effort flags appended by
+       `_augment_acp_command`.
+    3. Zenith's three safety keys (`sandbox_mode`, `approval_policy`,
+       `model_reasoning_effort`) — always win, since sandbox/approval
+       are autonomy-safety requirements and effort is the per-role
+       resolved value.
+
+    The `-c` flags remain in argv for `-c`-honoring codex-acp builds
+    (harmless if ignored by the npm adapter).
 
     For hermes the env is passed through unchanged.
     """
@@ -132,6 +185,34 @@ def _acp_subprocess_env(provider) -> dict[str, str]:
         # Env-var hints — harmless if codex ignores them.
         env["CODEX_SANDBOX"] = "danger-full-access"
         env["CODEX_DISABLE_SANDBOX"] = "1"
+        # The npm codex-acp adapter reads CODEX_CONFIG (JSON) for its
+        # configuration, not argv `-c` overrides. Build it in three
+        # layers so the user's custom model (from the command string)
+        # is preserved alongside zenith's safety config.
+        effort = reasoning_effort or "xhigh"
+        codex_config: dict[str, Any] = {}
+        # Layer 1: user-supplied CODEX_CONFIG.
+        existing = env.get("CODEX_CONFIG")
+        if existing is not None:
+            try:
+                parsed = json.loads(existing)
+            except json.JSONDecodeError as exc:
+                raise ACPError("CODEX_CONFIG must contain valid JSON") from exc
+            if not isinstance(parsed, dict):
+                raise ACPError("CODEX_CONFIG must be a JSON object")
+            codex_config = parsed
+        # Layer 2: -c overrides from the augmented command string
+        # (carries the user's custom model + zenith's -c flags).
+        if acp_command:
+            codex_config.update(_parse_codex_c_overrides(acp_command))
+        # Layer 3: zenith's safety keys always win.
+        codex_config["sandbox_mode"] = "danger-full-access"
+        codex_config["approval_policy"] = "never"
+        codex_config["model_reasoning_effort"] = effort
+        try:
+            env["CODEX_CONFIG"] = json.dumps(codex_config, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ACPError("Codex configuration must contain JSON-compatible values") from exc
     # hermes: no special env needed
     return env
 
@@ -197,6 +278,24 @@ async def _drain_stream_chunks(stream: asyncio.StreamReader | None) -> str:
     except Exception:  # noqa: BLE001
         return "".join(chunks)
     return "".join(chunks)
+
+
+async def _read_stderr_bytes(process: asyncio.subprocess.Process, *, timeout: float = 1.0) -> bytes:
+    """Best-effort read of a subprocess stderr, handling ``None`` for mypy.
+
+    ``Process.stderr`` is ``StreamReader | None`` (None when not piped).
+    Callers that launch with ``stderr=PIPE`` know it is not None at runtime,
+    but mypy cannot narrow that. This helper centralises the ``None`` guard
+    and the ``wait_for`` timeout handling so call sites stay mypy-clean.
+    """
+    stream = process.stderr
+    if stream is None:
+        return b""
+    try:
+        data = await asyncio.wait_for(stream.read(), timeout=timeout)
+        return data if isinstance(data, (bytes, bytearray)) else b""
+    except Exception:  # noqa: BLE001
+        return b""
 
 
 @dataclass
@@ -576,6 +675,11 @@ class ACPNodeRunner:
             role_config.worker_provider,
             role_config.worker_reasoning_effort,
         )
+        acp_env = _acp_subprocess_env(
+            role_config.worker_provider,
+            role_config.worker_reasoning_effort,
+            acp_command,
+        )
 
         workspace_dir = str(
             Path(cwd).expanduser().resolve() if cwd else store.workspace_dir(project_id)
@@ -607,18 +711,12 @@ class ACPNodeRunner:
             rc = mcp_process.returncode
             stderr_bytes = b""
             if rc is not None:
-                try:
-                    stderr_bytes = await asyncio.wait_for(mcp_process.stderr.read(), timeout=1.0)
-                except Exception:
-                    pass
+                stderr_bytes = await _read_stderr_bytes(mcp_process, timeout=1.0)
             if mcp_process.returncode is None:
                 mcp_process.terminate()
             await _close_subprocess(mcp_process, timeout=5)
             if not stderr_bytes:
-                try:
-                    stderr_bytes = await asyncio.wait_for(mcp_process.stderr.read(), timeout=1.0)
-                except Exception:
-                    pass
+                stderr_bytes = await _read_stderr_bytes(mcp_process, timeout=1.0)
             stderr_str = stderr_bytes.decode("utf-8", errors="replace")
             summary = f"Worker MCP server failed to start. exit_code={rc} stderr={stderr_str}"
             return self._synthesize_missing_handoff(task, summary=summary)
@@ -765,6 +863,11 @@ class ACPNodeRunner:
             role_config.worker_provider,
             role_config.worker_reasoning_effort,
         )
+        acp_env = _acp_subprocess_env(
+            role_config.worker_provider,
+            role_config.worker_reasoning_effort,
+            acp_command,
+        )
 
         workspace_dir = str(store.workspace_dir(project_id))
         project_bucket = str(store.zenith_dir(project_id))
@@ -805,18 +908,17 @@ class ACPNodeRunner:
             workspace_dir=workspace_dir,
         )
 
+        acp_env["ZENITH_HANDOFF_PATH"] = str(report_path)
+        acp_env["ZENITH_NODE_TYPE"] = "terminal-review"
+        acp_env["ZENITH_NODE_ID"] = "terminal-reviewer"
+
         process = await asyncio.create_subprocess_shell(
             acp_command,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workspace_dir,
-            env={
-                **_acp_subprocess_env(role_config.worker_provider),
-                "ZENITH_HANDOFF_PATH": str(report_path),
-                "ZENITH_NODE_TYPE": "terminal-review",
-                "ZENITH_NODE_ID": "terminal-reviewer",
-            },
+            env=acp_env,
             limit=SUBPROCESS_STREAM_LIMIT,
         )
         tracker = ACPProgressTracker(callback=progress_callback)

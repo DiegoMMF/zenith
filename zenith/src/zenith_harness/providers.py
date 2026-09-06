@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-ProviderName = Literal["claude", "codex", "hermes", "antigravity", "opencode"]
-ConfigFormat = Literal["mcp_json", "codex_config", "opencode_config", "antigravity_config"]
+ProviderName = Literal["claude", "codex", "hermes", "antigravity", "opencode", "omnigent"]
+ConfigFormat = Literal[
+    "mcp_json", "codex_config", "opencode_config", "antigravity_config", "omnigent_yaml"
+]
 
 ORCHESTRATOR_PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "claude",
@@ -12,6 +14,7 @@ ORCHESTRATOR_PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "antigravity",
     "opencode",
     "hermes",
+    "omnigent",
 )
 WORKER_PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "claude",
@@ -42,6 +45,8 @@ class ProviderSelection:
     validation_worker: ProviderDefinition | None = None
     worker_acp_command: str | None = None
     validation_worker_acp_command: str | None = None
+    terminal_reviewer: ProviderDefinition | None = None
+    terminal_reviewer_acp_command: str | None = None
 
     @property
     def resolved_worker_acp_command(self) -> str | None:
@@ -65,6 +70,24 @@ class ProviderSelection:
             or self.resolved_validation_worker.default_worker_acp_command
         )
 
+    @property
+    def resolved_terminal_reviewer(self) -> ProviderDefinition:
+        return self.terminal_reviewer or self.resolved_validation_worker
+
+    @property
+    def resolved_terminal_reviewer_acp_command(self) -> str | None:
+        if self.terminal_reviewer_acp_command:
+            return self.terminal_reviewer_acp_command
+        if self.resolved_terminal_reviewer.name != self.resolved_validation_worker.name:
+            return (
+                self.resolved_terminal_reviewer.default_worker_acp_command
+                or self.resolved_validation_worker_acp_command
+            )
+        return (
+            self.resolved_validation_worker_acp_command
+            or self.resolved_terminal_reviewer.default_worker_acp_command
+        )
+
     def env(self) -> dict[str, str]:
         env: dict[str, str] = {
             "ZENITH_ORCHESTRATOR_PROVIDER": self.orchestrator.name,
@@ -80,6 +103,14 @@ class ProviderSelection:
             and validation_command is not None
         ):
             env["ZENITH_VALIDATOR_ACP_COMMAND"] = validation_command
+        if self.resolved_terminal_reviewer.name != self.resolved_validation_worker.name:
+            env["ZENITH_TERMINAL_REVIEWER_PROVIDER"] = self.resolved_terminal_reviewer.name
+        tr_command = self.resolved_terminal_reviewer_acp_command
+        if (
+            tr_command != self.resolved_validation_worker_acp_command
+            and tr_command is not None
+        ):
+            env["ZENITH_TERMINAL_REVIEWER_ACP_COMMAND"] = tr_command
         return env
 
     def skill_install_dirs(self) -> tuple[str, ...]:
@@ -87,6 +118,7 @@ class ProviderSelection:
             self.orchestrator.skill_dirs
             + self.worker.skill_dirs
             + self.resolved_validation_worker.skill_dirs
+            + self.resolved_terminal_reviewer.skill_dirs
         )
 
     def skill_alias_dirs(self) -> tuple[str, ...]:
@@ -94,6 +126,7 @@ class ProviderSelection:
             self.orchestrator.skill_alias_dirs
             + self.worker.skill_alias_dirs
             + self.resolved_validation_worker.skill_alias_dirs
+            + self.resolved_terminal_reviewer.skill_alias_dirs
         )
 
     def providers(self) -> tuple[ProviderDefinition, ...]:
@@ -101,6 +134,7 @@ class ProviderSelection:
             self.orchestrator,
             self.worker,
             self.resolved_validation_worker,
+            self.resolved_terminal_reviewer,
         )
         ordered: list[ProviderDefinition] = []
         seen: set[str] = set()
@@ -173,6 +207,15 @@ PROVIDERS: dict[ProviderName, ProviderDefinition] = {
         acp_supports_system_prompt=True,
         acp_runtime_mode=None,
     ),
+    "omnigent": ProviderDefinition(
+        name="omnigent",
+        skill_dirs=(".omnigent/skills", ".agents/skills"),
+        skill_alias_dirs=(".omnigent/skills", ".agents/skills"),
+        config_format="omnigent_yaml",
+        default_worker_acp_command=None,
+        agent_output_dir=None,
+        orchestrator_prompt_output_path=".omnigent/zenith-orchestrator/AGENTS.md",
+    ),
 }
 
 
@@ -191,6 +234,6 @@ def provider_names_for_role(role: Literal["orchestrator", "worker"]) -> tuple[st
 
 
 def default_worker_provider_name(orchestrator_provider_name: str) -> str:
-    if orchestrator_provider_name in PROVIDERS:
+    if orchestrator_provider_name in WORKER_PROVIDER_NAMES:
         return orchestrator_provider_name
     return "claude"
