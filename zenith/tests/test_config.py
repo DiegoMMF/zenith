@@ -281,3 +281,44 @@ def test_config_resolution_matches_provider_selection(
             config.resolved_validator_acp_command
             == selection.resolved_validation_worker_acp_command
         ), selection
+
+
+def test_terminal_reviewer_selection_round_trips_through_env(
+    monkeypatch,
+    harness_home: Path,
+) -> None:
+    """A distinct terminal reviewer written by env() is read back intact."""
+    selection = ProviderSelection(
+        orchestrator=get_provider("claude"),
+        worker=get_provider("claude"),
+        terminal_reviewer=get_provider("codex"),
+        terminal_reviewer_acp_command="custom-tr-acp",
+    )
+
+    config = _apply_selection_env(monkeypatch, harness_home, selection)
+
+    assert config.terminal_reviewer_provider.name == "codex"
+    assert config.resolved_terminal_reviewer_acp_command == "custom-tr-acp"
+
+
+def test_terminal_reviewer_cascades_to_validator_after_round_trip(
+    monkeypatch,
+    harness_home: Path,
+) -> None:
+    """With no explicit terminal reviewer, discover() falls back to the validator.
+
+    env() omits the terminal-reviewer vars because they match the validator
+    (the cascade parent); the read side must reconstruct the same resolution.
+    """
+    selection = ProviderSelection(
+        orchestrator=get_provider("claude"),
+        worker=get_provider("claude"),
+        validation_worker=get_provider("codex"),
+    )
+
+    assert "ZENITH_TERMINAL_REVIEWER_PROVIDER" not in selection.env()
+
+    config = _apply_selection_env(monkeypatch, harness_home, selection)
+
+    assert config.terminal_reviewer_provider_name is None
+    assert config.terminal_reviewer_provider.name == "codex"
