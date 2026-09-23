@@ -5,114 +5,36 @@ description: Benchmark validation procedure for one assigned benchmark-related t
 
 # Benchmark Validator
 
-Use this skill for a validation assignment targeting exactly one benchmark-related
-assertion.
+Use this for exactly one benchmark-related assertion. If the assignment names more than one, fail it as too broad and request attention.
 
-For optimization `EXP-*` targets, you are not selecting the winner or optimizing
-further. You independently decide whether the experiment produced a trustworthy
-outcome under its contract.
+You do not pick the winner and you do not keep optimizing. You decide whether the cited candidate is trustworthy.
 
-For optimization `EXP-*` targets, act as an adversarial tester for the selected
-candidate. The contract is the minimum bar, not the whole test plan. Before
-promotion, define and run a compact but comprehensive validation plan that
-attacks the candidate's likely correctness and performance failure modes.
+Read the assignment, the one contract, `AGENTS.md`, the ledger, the candidate ref, and the measurement protocol. Do not mutate the workspace, and do not read or depend on hidden verifier internals.
 
-For engineering `VAL-*` or legacy engineering targets, do not use optimization
-outcome semantics. Pass only when the assigned benchmark, performance,
-correctness, and guardrail behavior required by the assignment and contract is
-proven with fresh evidence.
+## Integrity
 
-## Inputs
+If the candidate changes the benchmark, scoring, fixtures, golden outputs, or verifier to move the number, the proof is invalid. For an `EXP-*` target that is `invalid`. For a `VAL-*` or legacy target, `passed=false`.
 
-Read:
+## Remeasure
 
-- Validation assignment.
-- The single assigned benchmark-related contract.
-- `AGENTS.md`.
-- Experiment ledger path cited by the assignment or contract.
-- Candidate artifact/ref/patch/checksum cited by the assignment, contract, or
-  ledger.
-- Measurement protocol, correctness/guardrail commands, protected files, and source/baseline refs cited by the contract.
-- For optimization targets, also inspect visible runtime resources read-only
-  when useful: changed files, benchmark scripts, fixtures, public outputs,
-  baseline/reference artifacts, verifier-adjacent code, logs, and generated
-  artifacts. Do not mutate these resources, copy protected artifacts into a
-  submission, or make submitted code depend on evaluator-only locations.
+Rebuild parent and candidate as the contract says. Run both under the declared protocol. Capture raw output, aggregate, spread, and environment. Run correctness and guardrails before any metric comparison. A skipped, stale, or un-runnable check is `invalid` for `EXP-*` and `passed=false` for an engineering target.
 
-If the assignment targets more than one benchmark-related assertion, fail the
-assignment as too broad and request attention.
+Attack the failure modes this candidate could introduce (input size, cache, concurrency, edge cases) in addition to the contract's own command. If the contract does not give enough oracle or candidate binding to do that, classify the experiment `invalid` instead of promoting on speed alone.
 
-## Procedure
+## Outcome
 
-1. **Identify artifacts**
-   - Parent/baseline ref.
-   - Candidate ref or patch artifact.
-   - Benchmark command, run count, aggregation, variance policy.
-   - Correctness and guardrail commands.
-   - Protected benchmark/scoring/data/verifier files.
+For an optimization `EXP-*` target:
 
-2. **Audit evidence integrity**
-   - Inspect candidate changes affecting benchmark scripts, scoring, data, fixtures, golden outputs, correctness verifiers, generated expected outputs, seeds, or measurement config.
-   - If proof is weakened or unapproved metric surfaces changed, classify an
-     optimization experiment `invalid`; for an engineering target, mark the item
-     `passed=false`.
+- `promoted`: integrity holds, setup is complete, correctness and guardrails pass, and the metric meets the promotion rule.
+- `rejected`: integrity and setup hold, but correctness, a guardrail, or the metric fails.
+- `budget_exhausted`: the declared budget stopped the run and the contract allows that.
+- `invalid`: missing ledger, broken candidate binding, compromised evidence, or unverifiable setup.
 
-3. **Define adversarial validation plan**
-   - For optimization `EXP-*`, do this before remeasurement. Do not only run the
-     contract's benchmark command.
-   - From the contract, ledger, changed files, source, available fixtures,
-     benchmark scripts, baseline/reference artifacts, public outputs, and
-     visible runtime resources, identify the correctness and performance risk
-     axes this candidate could break.
-   - Build a compact test plan that includes the contract-required checks plus
-     targeted/adversarial/proxy cases for changed surfaces. Cover important
-     input, data, media, config, size, timing, cache, concurrency, edge, stress,
-     and failure-mode axes when they are relevant to the candidate.
-   - For each case, state the expected correctness evidence, the failure
-     boundary, and whether timing evidence is needed. Record limitations for
-     risk axes that cannot be tested in the validation environment.
-   - If the contract or ledger does not provide enough oracle, candidate binding,
-     or correctness information to build a meaningful adversarial plan, classify
-     the optimization experiment `invalid` rather than promoting from aggregate
-     speed alone.
+`passed=true` for `promoted`, `rejected`, or a legitimate `budget_exhausted`. `passed=false` for `invalid`.
 
-4. **Remeasure independently**
-   - Reconstruct parent and candidate states using the method assigned by the
-     assignment or contract.
-   - Avoid destructive operations on the shared workspace.
-   - Run parent and candidate under the declared protocol.
-   - Capture raw outputs, aggregate values, spread/noise, environment, and deviations.
+For a `VAL-*` or legacy engineering target, `passed=true` only when the benchmark assertion and its guardrails pass with fresh evidence. A rejected candidate, a failed guardrail, missing evidence, or an exhausted budget is `passed=false` unless the contract defines that outcome as the required behavior.
 
-5. **Run correctness and guardrails**
-   - Required correctness/quality/compatibility/safety checks must run before objective metric comparison can promote a candidate.
-   - For optimization `EXP-*`, run the adversarial validation plan as well as
-     the contract-required checks.
-   - Record per-case correctness and speed evidence before relying on aggregate
-     metric output.
-   - Failed checks make the candidate `rejected`, not promoted.
-   - Missing, stale, skipped, or un-runnable checks make the experiment `invalid`.
-
-6. **Classify outcome**
-   - First determine whether the assigned target is an optimization `EXP-*`
-     target or an engineering/legacy target.
-   - `promoted`: credible integrity, setup complete, correctness/guardrails pass, metric meets promotion rule.
-   - `rejected`: credible integrity and setup, but correctness/guardrails fail or metric does not win.
-   - `budget_exhausted`: declared budget prevented completion and the contract allows that honest outcome.
-   - `invalid`: missing ledger/ref/checks, broken candidate binding, compromised evidence, or unverifiable setup.
-
-For optimization `EXP-*` targets, use `passed=true` for `promoted`, `rejected`,
-or legitimate `budget_exhausted`; use `passed=false` for `invalid`.
-
-For engineering `VAL-*` or legacy engineering targets, use normal validation
-semantics: `passed=true` only when the assigned benchmark/performance assertion
-and required guardrails pass with fresh evidence. A rejected candidate, failed
-guardrail, missing evidence, or budget-exhausted result is `passed=false` unless
-the contract explicitly defines that outcome as the required behavior.
-
-7. **Write regression ledger only for invalid**
-   - If `passed=false`, write `<regressions_dir>/<item_id>.md` with setup,
-     command, expected credible measurement or required behavior, observed
-     invalidating issue, and evidence artifact paths.
+If `passed=false`, write `<regressions_dir>/<item_id>.md` with the command, the expected measurement or behavior, and the invalidating issue.
 
 ## Report
 
@@ -132,14 +54,8 @@ the contract explicitly defines that outcome as the required behavior.
 - Candidate: <runs, aggregate, spread, raw paths>
 - Improvement: <calculation and threshold>
 
-## Adversarial Validation Plan
-- Risk axes: <candidate-specific axes attacked>
-- Cases: <case -> expected evidence -> failure boundary>
-- Limitations: <untested risk axes and why>
-
 ## Correctness And Guardrails
 - `<command>` -> exit <code>, <result>
-- Per-case adversarial results: <case -> passed/rejected/invalid evidence>
 
 ## Outcome
 - <promoted | rejected | budget_exhausted | invalid>
@@ -149,4 +65,4 @@ the contract explicitly defines that outcome as the required behavior.
 - <setup or measurement caveats>
 ```
 
-Call `end_node` with exactly one item for the assigned target id, then exit immediately.
+Call `end_node` with exactly one item for the assigned target id, then exit.
