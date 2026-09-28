@@ -6,7 +6,7 @@
       "args": [
         "run",
         "--project",
-        "/home/diego/Datos/Software/research-orchestrators/zenith/zenith",
+        "/home/diego/Datos/Software/zenith/zenith",
         "zenith-server",
         "--mode",
         "orchestrator"
@@ -16,6 +16,18 @@
         "ZENITH_WORKER_PROVIDER": "claude",
         "ZENITH_WORKER_ACP_COMMAND": "claude-agent-acp"
       }
+    },
+    "pulse": {
+      "type": "sse",
+      "url": "http://localhost:3050/sse"
+    },
+    "neon": {
+      "type": "http",
+      "url": "https://mcp.neon.tech/mcp"
+    },
+    "vercel": {
+      "type": "http",
+      "url": "https://mcp.vercel.com"
     }
   }
 }
