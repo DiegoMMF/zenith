@@ -272,8 +272,8 @@ uv run zenith init \
 
 Pero Zenith no puede garantizar por sí solo:
 
-* orquestador en `gemini-3.1-pro`;
-* workers en `gemini-3.5-flash`.
+* orquestador en `gemini-3.8-flash`;
+* workers en `gemini-3.8-flash`.
 
 La razón es que el adaptador `agy-acp/agy_acp_server.py` incluido aquí responde como prueba de
 concepto y no conecta realmente con un selector de modelos Gemini. Para lograr ese ruteo sin
